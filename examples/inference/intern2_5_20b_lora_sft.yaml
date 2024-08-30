@@ -1,0 +1,7 @@
+model_name_or_path: /share/new_models/Shanghai_AI_Laboratory/internlm2_5-20b-chat
+adapter_name_or_path: saves/internlm2_5-20b-chat/lora/sft
+template: intern2
+finetuning_type: lora
+
+# llamafactory-cli chat examples/inference/intern2_5_20b_lora_sft.yaml
+# 平面被任意划分为四个区域，证明：必定存在一条直线，使得该直线至少穿过其中三个区域。

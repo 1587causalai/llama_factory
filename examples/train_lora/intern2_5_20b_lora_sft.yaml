@@ -1,5 +1,6 @@
 ### model
-model_name_or_path: /share/new_models/meta-llama/Meta-Llama-3-8B-Instruct
+model_name_or_path: /share/new_models/Shanghai_AI_Laboratory/internlm2_5-20b-chat
+visual_inputs: false
 
 ### method
 stage: sft
@@ -8,15 +9,15 @@ finetuning_type: lora
 lora_target: all
 
 ### dataset
-dataset: alpaca_en_demo
-template: llama3
+dataset: Mchat_dataset_new # /root/demo/math/AMchat/dataset/AMchat_dataset_new.json
+template: intern2
 cutoff_len: 1024
 max_samples: 1000
 overwrite_cache: true
 preprocessing_num_workers: 16
 
 ### output
-output_dir: saves/llama3-8b/lora/sft
+output_dir: saves/internlm2_5-20b-chat/lora/sft
 logging_steps: 10
 save_steps: 500
 plot_loss: true
@@ -37,3 +38,6 @@ val_size: 0.1
 per_device_eval_batch_size: 1
 eval_strategy: steps
 eval_steps: 500
+
+
+# llamafactory-cli train examples/train_lora/intern2_5_20b_lora_sft.yaml
