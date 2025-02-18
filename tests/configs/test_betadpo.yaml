@@ -1,0 +1,40 @@
+### model
+model_name_or_path: /root/models/DeepSeek-R1-Distill-Qwen-1.5B
+trust_remote_code: true
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+beta_epsilon: 0.1    # BetaDPO 特有参数
+
+### dataset
+dataset: dpo_en_demo
+template: deepseek3
+cutoff_len: 1024
+max_samples: 10
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: outputs/test_betadpo
+logging_steps: 1
+save_steps: 5
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4   # 减小梯度累积
+learning_rate: 5.0e-5
+num_train_epochs: 5.0
+max_grad_norm: 1.0
+lr_scheduler_type: cosine
+warmup_steps: 0
+bf16: true
+optim: adamw_torch
+ddp_timeout: 180000000
+include_num_input_tokens_seen: true 
