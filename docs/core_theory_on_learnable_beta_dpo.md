@@ -72,6 +72,9 @@ $$\beta(x; \pi_\theta) = w \cdot \mathrm{PPL}_{\pi_\theta}(x) \cdot f(h_{\pi_\th
 $$\mathcal{L}_{\text{LearnableBetaDPO}}(\theta) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta(x; \pi_\theta) \left[ \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right] \right) \right]$$
 
 
+请注意对于偏好数据集的两个 responses, $\beta(x; \pi_\theta)$ 的计算方式是共用一个 input $x$ 的。
+
+
 ## 4. Learnable Beta DPO 训练过程
 
 ### 4.1 模型结构：BetaHead 与策略模型协同

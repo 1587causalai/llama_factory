@@ -386,8 +386,32 @@ class SwanLabArguments:
 
 
 @dataclass
+class BetaHeadArguments:
+    r"""
+    Arguments pertaining to the Beta Head network in Beta DPO.
+    """
+    beta_head_type: Literal["mlp"] = field(
+        default="mlp",
+        metadata={"help": "Type of beta head network."}
+    )
+    beta_head_epsilon: float = field(
+        default=0.1,
+        metadata={"help": "Epsilon value for beta head function."}
+    )
+    beta_head_hidden_size: int = field(
+        default=768,
+        metadata={"help": "Hidden size of beta head network."}
+    )
+    beta_head_learning_rate: float = field(
+        default=1e-4,
+        metadata={"help": "Learning rate for beta head network."}
+    )
+
+
+@dataclass
 class FinetuningArguments(
-    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments
+    FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments, ApolloArguments, BAdamArgument, SwanLabArguments,
+    BetaHeadArguments
 ):
     r"""
     Arguments pertaining to which techniques we are going to fine-tuning with.

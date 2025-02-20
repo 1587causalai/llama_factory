@@ -581,6 +581,37 @@ def nested_detach(
     else:
         return tensors
 
+def create_prompt_labels(labels: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+    """
+    创建用于计算prompt部分PPL的labels
+    Args:
+        labels: 原始labels [batch_size, seq_len]
+        input_ids: 输入token ids [batch_size, seq_len]
+    Returns:
+        prompt_labels: 与input_ids对齐的prompt部分labels [batch_size, seq_len]
+    """
+    prompt_labels = labels.clone()
+    
+    # 找到每个序列中第一个非-100的位置（response开始的位置）
+    first_response_mask = (labels != IGNORE_INDEX).float()
+    first_response_idx = first_response_mask.argmax(dim=1)  # [batch_size]
+    
+    # 创建序列位置索引
+    seq_idx = torch.arange(labels.size(1), device=labels.device)
+    seq_idx = seq_idx.unsqueeze(0).expand(labels.size(0), -1)  # [batch_size, seq_len]
+    
+    # 创建prompt区域mask
+    prompt_mask = seq_idx < first_response_idx.unsqueeze(1)  # [batch_size, seq_len]
+    
+    # 将prompt区域设为input_ids的值，其他区域设为IGNORE_INDEX
+    prompt_labels = torch.where(
+        prompt_mask,
+        input_ids,  # prompt区域保持与input_ids一致
+        torch.full_like(labels, IGNORE_INDEX)  # 非prompt区域设为IGNORE_INDEX
+    )
+    
+    return prompt_labels
+
 
 def get_swanlab_callback(finetuning_args: "FinetuningArguments") -> "TrainerCallback":
     r"""

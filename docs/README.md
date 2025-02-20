@@ -45,3 +45,16 @@ $$f(x) = 1 + \epsilon \cdot \tanh(NN(h_{\pi_\theta}(x)))$$
 其中 $h_{\pi_\theta}(x)$ 是由策略模型 $\pi_\theta$ 得到的最后一层隐状态，$NN(h_{\pi_\theta}(x))$ 是一个神经网络. 
 
 
+## 重要更改: PPL(x) --> log(PPL(x))
+
+在原始的 learnable beta DPO 算法中，$\beta$ 的计算公式为：
+
+$$\beta(x) = w \cdot PPL(x) \cdot f(x)$$
+
+为了数值稳定性, 我们将其改为:
+
+$$\beta(x) = w \cdot \log(PPL(x)) \cdot f(x)$$
+
+
+
+

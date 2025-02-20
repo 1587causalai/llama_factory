@@ -1,46 +1,48 @@
-### model
-model_name_or_path: /root/models/DeepSeek-R1-Distill-Qwen-1.5B
+# 模型参数
+model_name_or_path: /root/models/Qwen1.5-0.5B-Chat
 trust_remote_code: true
 flash_attn: auto
 
-### method
-stage: betadpo
+# 训练方法
+stage: dpo
 do_train: true
 finetuning_type: lora
-lora_rank: 8
+lora_rank: 4
 lora_alpha: 16
 lora_dropout: 0
 lora_target: all
+
+
+# Beta DPO 参数
+pref_beta: 0.1
 pref_ftx: 0
 pref_loss: sigmoid
-
-### beta head
-beta_head_type: mlp
+beta_head_type: linear
 beta_head_epsilon: 0.1
-beta_head_hidden_size: 768
-beta_head_learning_rate: 1.0e-4
+simpo_gamma: 0.0
+dpo_label_smoothing: 0.0
 
-### dataset
+# 数据参数
 dataset: dpo_en_demo
 dataset_dir: data
-template: deepseek3
+template: qwen
 cutoff_len: 2048
-max_samples: 10     # 用较少的样本进行测试
+max_samples: 10
 overwrite_cache: true
-preprocessing_num_workers: 16
+preprocessing_num_workers: 10
 packing: false
 
-### output
-output_dir: outputs/test_betadpo
+# 输出设置
+output_dir: tests/runs/test_betadpo_qwen_0.5b
 logging_steps: 1
 save_steps: 5
 plot_loss: true
 overwrite_output_dir: true
-report_to: wandb
+report_to: []
 
-### train
+# 训练参数
 per_device_train_batch_size: 2
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 2
 learning_rate: 5.0e-5
 num_train_epochs: 5.0
 max_grad_norm: 1.0

@@ -192,7 +192,7 @@ class CustomDPOTrainer(DPOTrainer):
 
         Otherwise the average log probabilities.
         """
-        if self.finetuning_args.use_ref_model:
+        if self.finetuning_args.use_ref_model:  # 如果使用参考模型, 需要分离梯度
             batch = nested_detach(batch, clone=True)  # avoid error
 
         all_logits: "torch.Tensor" = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
