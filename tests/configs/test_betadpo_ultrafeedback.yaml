@@ -1,9 +1,11 @@
-### model
+# Beta DPO 配置文件 – ultrafeedback 版本
+
+# 模型参数
 model_name_or_path: /root/models/Qwen1.5-0.5B-Chat
 trust_remote_code: true
 flash_attn: auto
 
-### method
+# 训练方法及 Beta DPO 参数
 stage: dpo
 do_train: true
 finetuning_type: lora
@@ -11,11 +13,17 @@ lora_rank: 2
 lora_alpha: 16
 lora_dropout: 0
 lora_target: all
+
+# Beta DPO 参数
 pref_beta: 0.1
 pref_ftx: 0
 pref_loss: sigmoid
+beta_head_type: mlp
+beta_head_epsilon: 0.1
+simpo_gamma: 0.0
+dpo_label_smoothing: 0.0
 
-### dataset
+# 数据参数
 dataset: ultrafeedback
 dataset_dir: data
 template: qwen
@@ -24,23 +32,23 @@ preprocessing_num_workers: 16
 packing: false
 max_samples: 1000
 
-### output
-output_dir: outputs/dpo_ultrafeedback_qwen
+# 输出设置
+output_dir: outputs/test_betadpo_ultrafeedback_qwen
 logging_steps: 50
 save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 report_to: wandb
 
-### train
+# 训练参数
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 2
 learning_rate: 5.0e-5
-num_train_epochs: 1.0
+num_train_epochs: 2.0
 max_grad_norm: 1.0
 lr_scheduler_type: cosine
 warmup_steps: 100
 bf16: true
 optim: adamw_torch
 ddp_timeout: 180000000
-include_num_input_tokens_seen: true
+include_num_input_tokens_seen: true 

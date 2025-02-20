@@ -32,7 +32,7 @@
 
 这是一个基于可学习 beta 值的 DPO 实现。项目的核心思想是设计一个可学习的函数：
 
-$$\beta(x) = w \cdot PPL(x) \cdot f(x)$$
+$$\beta(x) = w \cdot \log(PPL(x)) \cdot f(x)$$
 
 其中：
 - $w$ 是一个可学习的参数

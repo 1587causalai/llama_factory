@@ -49,7 +49,7 @@ class BetaHead(nn.Module):
         self.config = config
 
         # 初始化可学习参数 w (移入 BetaHead 内部)
-        self.register_parameter("w", nn.Parameter(torch.ones(1)* 0.1))  # 使用 register_parameter 确保参数被正确注册
+        self.register_parameter("w", nn.Parameter(torch.ones(1)* 0.01))  # 使用 register_parameter 确保参数被正确注册
 
         # 根据配置构建神经网络 NN(x)
         if config.nn_type == "linear":

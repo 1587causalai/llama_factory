@@ -54,7 +54,7 @@ $$\mathcal{L}_{\text{DPO}}(\theta) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D
 
 Learnable Beta DPO 的核心创新是将固定的 $\beta$ 替换为**依赖于上下文 $x$ 和策略模型 $\pi_\theta$ 的动态函数 $\beta(x; \pi_\theta)$**。本文提出一种基于策略模型困惑度和隐状态的 $\beta(x; \pi_\theta)$ 函数：
 
-$$\beta(x; \pi_\theta) = w \cdot \mathrm{PPL}_{\pi_\theta}(x) \cdot f(h_{\pi_\theta}(x))$$
+$$\beta(x; \pi_\theta) = w \cdot \log(\mathrm{PPL}_{\pi_\theta}(x)) \cdot f(h_{\pi_\theta}(x))$$
 
 各组成部分的解释如下：
 

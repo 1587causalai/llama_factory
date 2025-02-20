@@ -162,7 +162,7 @@ Direct Preference Optimization (DPO) 是大语言模型对齐中的一个重要�
      - 至少是那些出现很多的观测奖励是最大化的, 不然不会反复出现, 一些奖励不高的观测策略可能是一些探索数据, 所以才会奖励并没有很高.
      - 所以对于一个数据集 in a common context $x$, 其奖励 $(r(x,y))$ 的分布应该是一个截断分布 with a peak at the maximum reward. 
    
-   因此我希望设计一个 learnable 的 $\beta(x) = w \cdot PPL(x) \cdot f(x)$ 函数, 使得其能够自适应的调整 $\beta$ 的值, where $w$ is a learnable parameter, $PPL(x)$ is the perplexity of the context $x$, and $f(x)$ is a function of the context $x$ in the range of $[1-\epsilon, 1+\epsilon]$, e.g. $f(x) = 1 + \epsilon \cdot \tanh(NN(x))$ or $f(x) = 1 + \epsilon \cos(NN(x))$. 
+因此我希望设计一个 learnable 的 $\beta(x) = w \cdot \log(PPL(x)) \cdot f(x)$ 函数, 使得其能够自适应的调整 $\beta$ 的值, where $w$ is a learnable parameter, $PPL(x)$ is the perplexity of the context $x$, and $f(x)$ is a function of the context $x$ in the range of $[1-\epsilon, 1+\epsilon]$, e.g. $f(x) = 1 + \epsilon \cdot \tanh(NN(x))$ or $f(x) = 1 + \epsilon \cos(NN(x))$. 
 
 
 
