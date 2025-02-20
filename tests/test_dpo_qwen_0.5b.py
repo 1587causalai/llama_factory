@@ -84,21 +84,53 @@ def test_dpo_qwen_0_5b():
     output_table.add_column("状态", style="green")
     output_table.add_column("路径", style="yellow")
     
-    # 检查 loss 图表
-    loss_png = os.path.join(training_args.output_dir, "loss.png")
+    # 检查 loss 图表和训练结果
+    training_loss_png = os.path.join(training_args.output_dir, "training_loss.png")
+    training_rewards_png = os.path.join(training_args.output_dir, "training_rewards_accuracies.png")
+    train_results = os.path.join(training_args.output_dir, "train_results.json")
+    
     output_table.add_row(
-        "Loss 图表",
-        "[green]已生成[/green]" if os.path.exists(loss_png) else "[red]未生成[/red]",
-        loss_png
+        "训练 Loss 图表",
+        "[green]已生成[/green]" if os.path.exists(training_loss_png) else "[red]未生成[/red]",
+        training_loss_png
+    )
+    
+    output_table.add_row(
+        "奖励准确率图表",
+        "[green]已生成[/green]" if os.path.exists(training_rewards_png) else "[red]未生成[/red]",
+        training_rewards_png
+    )
+    
+    output_table.add_row(
+        "训练结果",
+        "[green]已保存[/green]" if os.path.exists(train_results) else "[red]未保存[/red]",
+        train_results
     )
     
     # 检查 LoRA adapter
-    adapter_path = os.path.join(training_args.output_dir, "adapter_model")
+    adapter_model = os.path.join(training_args.output_dir, "adapter_model.safetensors")
+    adapter_config = os.path.join(training_args.output_dir, "adapter_config.json")
     output_table.add_row(
-        "LoRA Adapter",
-        "[green]已保存[/green]" if os.path.exists(adapter_path) else "[red]未保存[/red]",
-        adapter_path
+        "LoRA 模型",
+        "[green]已保存[/green]" if os.path.exists(adapter_model) else "[red]未保存[/red]",
+        adapter_model
     )
+    output_table.add_row(
+        "LoRA 配置",
+        "[green]已保存[/green]" if os.path.exists(adapter_config) else "[red]未保存[/red]",
+        adapter_config
+    )
+    
+    # 检查最新的检查点
+    checkpoints = [d for d in os.listdir(training_args.output_dir) if d.startswith("checkpoint-")]
+    latest_checkpoint = max(checkpoints, key=lambda x: int(x.split("-")[1])) if checkpoints else None
+    if latest_checkpoint:
+        checkpoint_path = os.path.join(training_args.output_dir, latest_checkpoint)
+        output_table.add_row(
+            "最新检查点",
+            "[green]已保存[/green]",
+            checkpoint_path
+        )
     
     rprint(output_table)
     print_section("测试完成")

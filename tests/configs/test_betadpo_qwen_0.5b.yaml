@@ -17,8 +17,8 @@ lora_target: all
 pref_beta: 0.1
 pref_ftx: 0
 pref_loss: sigmoid
-beta_head_type: linear
-beta_head_epsilon: 0.1
+beta_head_type: mlp
+beta_head_epsilon: 0.0
 simpo_gamma: 0.0
 dpo_label_smoothing: 0.0
 
@@ -33,12 +33,12 @@ preprocessing_num_workers: 10
 packing: false
 
 # 输出设置
-output_dir: tests/runs/test_betadpo_qwen_0.5b
+output_dir: outputs/test_betadpo_qwen_0.5b
 logging_steps: 1
 save_steps: 5
 plot_loss: true
 overwrite_output_dir: true
-report_to: []
+report_to: wandb
 
 # 训练参数
 per_device_train_batch_size: 2

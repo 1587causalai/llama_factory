@@ -1,0 +1,46 @@
+### model
+model_name_or_path: /root/models/Qwen1.5-0.5B-Chat
+trust_remote_code: true
+flash_attn: auto
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 4
+lora_alpha: 16
+lora_dropout: 0
+lora_target: all
+pref_beta: 0.1
+pref_ftx: 0
+pref_loss: sigmoid
+
+### dataset
+dataset: ultrafeedback
+dataset_dir: data
+template: qwen
+cutoff_len: 2048
+preprocessing_num_workers: 16
+packing: false
+max_samples: 10000
+
+### output
+output_dir: outputs/dpo_ultrafeedback_qwen
+logging_steps: 50
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+report_to: wandb
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 5.0e-5
+num_train_epochs: 3.0
+max_grad_norm: 1.0
+lr_scheduler_type: cosine
+warmup_steps: 100
+bf16: true
+optim: adamw_torch
+ddp_timeout: 180000000
+include_num_input_tokens_seen: true

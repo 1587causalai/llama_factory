@@ -31,7 +31,7 @@ logging_steps: 1
 save_steps: 5
 plot_loss: true
 overwrite_output_dir: true
-report_to: none     # 测试时不需要 wandb
+report_to: wandb     # 测试时不需要 wandb
 
 ### train
 per_device_train_batch_size: 2    # 由于模型较小，可以使用更大的 batch size
