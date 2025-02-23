@@ -134,6 +134,8 @@ $$f(x) = 1 + \epsilon \cdot \tanh(NN(h_{\pi_\theta}(x)))$$
 
 ```
 
+你要证明我这个新的偏好对齐算法很好, 比 baseline DPO 及其各种变体要好, 我应该做哪些实验, 得到哪些指标来证明呢?
+
 
 
 ```markdown
