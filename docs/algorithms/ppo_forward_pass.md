@@ -206,6 +206,30 @@ def batched_forward_pass(
     )
 ```
 
+### 3.4 前向传播的数学表示
+
+从数学角度看，前向传播过程可以表示为：
+
+1. **生成阶段**：使用当前策略模型 $\pi_\theta$ 对提示 $x$ 生成回复 $y$：
+   
+   $$y \sim \pi_\theta(y|x)$$
+
+2. **对数概率计算**：对生成的序列计算对数概率：
+   
+   $$\log \pi_\theta(y|x) = \sum_{t=1}^{T} \log \pi_\theta(y_t|y_{<t}, x)$$
+   
+   其中 $y_t$ 是第 $t$ 个token，$y_{<t}$ 是所有先前的tokens。
+
+3. **值函数评估**：模型的值头网络计算状态值函数 $V_\theta(x, y_{<t})$，估计从当前状态开始的累积折扣奖励。
+
+4. **奖励评估**：奖励模型对生成的回复 $(x, y)$ 计算奖励 $r(x, y)$：
+   
+   $$r(x, y) = R_\phi(x, y)$$
+   
+   其中 $R_\phi$ 是参数为 $\phi$ 的奖励模型。
+
+这些计算步骤构成了PPO算法中前向传播的核心数学基础。
+
 ## 4. 损失函数计算
 
 PPO的损失函数计算是其核心部分，它结合了策略梯度和价值函数学习。
@@ -320,6 +344,127 @@ def compute_advantages(self, rewards, values, masks):
     
     return advantages, returns
 ```
+
+### 4.3 PPO损失函数的数学公式
+
+根据PPO论文和代码实现，我们可以详细推导PPO损失函数的数学表达式：
+
+#### 4.3.1 策略比率
+
+PPO的核心概念是策略比率，即新策略与旧策略的概率比：
+
+$$r_\theta(s_t, a_t) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)}$$
+
+在语言模型中，这转化为：
+
+$$r_\theta(x, y) = \frac{\pi_\theta(y|x)}{\pi_{\theta_{\text{old}}}(y|x)}$$
+
+或者等价地使用对数概率：
+
+$$r_\theta(x, y) = \exp(\log\pi_\theta(y|x) - \log\pi_{\theta_{\text{old}}}(y|x))$$
+
+#### 4.3.2 裁剪目标函数
+
+PPO的关键创新是裁剪目标函数，它限制策略更新的幅度：
+
+$$L^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min(r_t(\theta) \hat{A}_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon) \hat{A}_t) \right]$$
+
+其中：
+- $\hat{A}_t$ 是优势函数的估计值
+- $\epsilon$ 是裁剪参数（通常设置为0.1或0.2）
+- $\text{clip}(r, 1-\epsilon, 1+\epsilon)$ 将 $r$ 的值裁剪到 $[1-\epsilon, 1+\epsilon]$ 范围内
+
+这个裁剪机制确保策略更新不会过大，从而提高训练的稳定性。
+
+#### 4.3.3 价值函数损失
+
+价值函数的损失通常是均方误差：
+
+$$L^{\text{VF}}(\theta) = \mathbb{E}_t \left[ (V_\theta(s_t) - V_t^{\text{target}})^2 \right]$$
+
+其中 $V_t^{\text{target}}$ 是目标值，通常是折扣累积奖励（回报）：
+
+$$V_t^{\text{target}} = \sum_{l=0}^{\infty} \gamma^l r_{t+l}$$
+
+#### 4.3.4 广义优势估计（GAE）
+
+PPO通常使用广义优势估计来计算优势函数：
+
+$$\hat{A}_t^{\text{GAE}(\gamma, \lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l}^V$$
+
+其中 $\delta_t^V$ 是时序差分误差：
+
+$$\delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)$$
+
+在实现中，GAE的计算采用递归方式：
+
+$$\hat{A}_t = \delta_t + \gamma\lambda \hat{A}_{t+1}$$
+
+这在代码中体现为：
+
+```python
+delta = rewards[t] + self.config.gamma * next_value * masks[t] - values[t]
+gae = delta + self.config.gamma * self.config.gae_lambda * masks[t] * gae
+advantages[t] = gae
+```
+
+#### 4.3.5 完整的PPO损失函数
+
+完整的PPO损失函数结合了策略损失和价值函数损失：
+
+$$L^{\text{PPO}}(\theta) = L^{\text{CLIP}}(\theta) - c_1 L^{\text{VF}}(\theta) + c_2 S[\pi_\theta](s_t)$$
+
+其中：
+- $c_1, c_2$ 是权重系数
+- $S[\pi_\theta](s_t)$ 是策略的熵，用于鼓励探索
+
+在LLaMA Factory的实现中，PPO损失函数简化为：
+
+$$L^{\text{PPO}}(\theta) = L^{\text{CLIP}}(\theta) + c_1 L^{\text{VF}}(\theta)$$
+
+其中 $c_1$ 是`vf_coef`参数，通常设置为0.1至1.0之间的值。
+
+#### 4.3.6 实现层面的数学表达
+
+在代码实现中，PPO损失的具体计算过程为：
+
+1. 计算策略比率：$r(\theta) = \exp(\log\pi_\theta - \log\pi_{\theta_{\text{old}}})$
+2. 裁剪策略比率：$r_{\text{clipped}}(\theta) = \text{clip}(r(\theta), 1-\epsilon, 1+\epsilon)$
+3. 计算策略损失：$L^{\text{policy}} = -\min(r(\theta)A, r_{\text{clipped}}(\theta)A)$
+4. 计算价值损失：$L^{\text{value}} = (V_\theta - V_{\text{target}})^2$
+5. 组合总损失：$L = L^{\text{policy}} + c_1 L^{\text{value}}$
+
+这些步骤在代码中的对应实现是：
+
+```python
+# 计算策略比率
+ratio = torch.exp(logprobs - mini_batch_old_logprobs)
+
+# 裁剪策略比率
+clipped_ratio = torch.clamp(ratio, 1.0 - self.config.clip_range, 1.0 + self.config.clip_range)
+
+# 计算策略损失
+policy_loss = -torch.min(ratio * mini_batch_advantages, clipped_ratio * mini_batch_advantages)
+
+# 计算价值损失
+value_loss = (values - mini_batch_returns) ** 2
+
+# 总损失
+loss = policy_loss + self.config.vf_coef * value_loss
+```
+
+### 4.4 超参数的数学意义
+
+PPO算法中的关键超参数及其数学意义包括：
+
+- **clip_range** ($\epsilon$)：控制策略更新的最大幅度，防止过大的策略变化
+- **gamma** ($\gamma$)：折扣因子，控制未来奖励的重要性
+- **gae_lambda** ($\lambda$)：GAE参数，控制偏差-方差权衡
+- **vf_coef** ($c_1$)：价值函数损失的权重系数
+- **mini_batch_size**：每次更新使用的样本数量
+- **ppo_epochs**：每批数据训练的轮数
+
+这些超参数的设置对PPO的性能有显著影响，需要针对具体任务进行调整。
 
 ## 5. 与其他算法的区别
 

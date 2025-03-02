@@ -136,6 +136,10 @@ class RLHFArguments:
         default=0.1,
         metadata={"help": "The beta parameter in the preference loss."},
     )
+    pref_beta_scale: float = field(
+        default=1.0,
+        metadata={"help": "The scale factor c in dynamic beta calculation: β(x) = c · log(PPL(x)) · β."},
+    )
     pref_ftx: float = field(
         default=0.0,
         metadata={"help": "The supervised fine-tuning loss coefficient in DPO training."},
@@ -397,7 +401,7 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to train model in purely bf16 precision (without AMP)."},
     )
-    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto"] = field(
+    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto", "foodpo"] = field(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
@@ -457,7 +461,7 @@ class FinetuningArguments(
         self.apollo_target: List[str] = split_arg(self.apollo_target)
         self.freeze_vision_tower = self.freeze_vision_tower or self.train_mm_proj_only
         self.freeze_multi_modal_projector = self.freeze_multi_modal_projector and not self.train_mm_proj_only
-        self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+        self.use_ref_model = (self.stage == "dpo" or self.stage == "foodpo") and self.pref_loss not in ["orpo", "simpo"]
 
         assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
@@ -469,7 +473,7 @@ class FinetuningArguments(
         if self.stage == "ppo" and self.reward_model_type == "lora" and self.finetuning_type != "lora":
             raise ValueError("`reward_model_type` cannot be lora for Freeze/Full PPO training.")
 
-        if self.stage == "dpo" and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
+        if (self.stage == "dpo" or self.stage == "foodpo") and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
             raise ValueError("`dpo_label_smoothing` is only valid for sigmoid loss function.")
 
         if self.use_llama_pro and self.finetuning_type == "full":
