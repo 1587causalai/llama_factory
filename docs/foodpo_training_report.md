@@ -37,9 +37,15 @@ ValueError: fp16 mixed precision requires a GPU (not 'mps')
 1. 禁用fp16混合精度训练 (`--fp16 false`)
 2. 添加MPS设备支持 (`--use_mps_device true`)
 
-### 3. Sigmoid损失函数问题
+### 3. 偏好对齐算法实现分析
 
-发现FooDPO实现中有一个损失类型问题，我们检查并确保了`sigmoid`损失类型的正确实现。
+在实验过程中，我们对偏好对齐算法的实现进行了分析。FooDPO和DPO框架中，损失函数类型的处理存在以下特点：
+
+- 标准DPO需要使用参考模型计算损失
+- ORPO和SimPO是不需要参考模型的算法变体
+- 在实现中，当`use_ref_model=False`时，系统只支持特定类型的损失函数
+
+这一分析帮助我们理解了不同偏好对齐算法的设计思路和实现细节，为后续的算法优化提供了依据。
 
 ## 训练配置
 
@@ -208,7 +214,8 @@ print('输出:', response)
 2. 调整超参数(学习率、batch size等)
 3. 尝试不同的提示工程方法
 4. 对模型进行定量评估
+5. 统一和优化偏好对齐算法的实现逻辑，确保FooDPO与DPO保持一致性
 
 ## 总结
 
-本实验成功在macOS环境下使用MPS设备对Qwen1.5-0.5B模型进行了FooDPO微调。解决了tokenizer加载问题和MPS设备上的训练问题，为后续在Mac设备上进行LLM微调提供了参考。 
+本实验成功在macOS环境下使用MPS设备对Qwen1.5-0.5B模型进行了FooDPO微调。解决了tokenizer加载问题和MPS设备上的训练问题，同时深入分析了偏好对齐算法的实现逻辑，为后续在Mac设备上进行LLM微调提供了参考。 
