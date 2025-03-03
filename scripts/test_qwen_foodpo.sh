@@ -8,6 +8,10 @@
 # 此脚本用于使用fooDPO算法在小数据集上训练Qwen1.5-0.5B模型
 # 适用于macOS MPS设备(Apple Silicon)，数据集很小的情况
 #
+# 【实验目的】
+# 这个脚本能够测试不同动态beta缩放系数对训练结果的影响
+# 每次运行会生成独立的输出目录和wandb记录，便于比较分析结果
+#
 # 【小数据集适应性调整】
 # 1. 减小batch_size和gradient_accumulation_steps，避免过度更新
 # 2. 提高learning_rate以加速小数据集上的收敛
@@ -49,28 +53,29 @@
 # 设置MPS内存使用限制
 export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
 
+# ====================== 动态beta参数设置 ======================
+# 这是FooDPO算法的核心参数，控制困惑度对beta的影响程度
+# 值越大，困惑度对beta的影响越大；值越小，算法越接近标准DPO
+BETA_SCALE=0.5                # 动态beta缩放因子[0.01-1.0之间]
+# ============================================================
+
 # 基本配置参数
 MODEL_PATH=~/models/Qwen1.5-0.5B
 DATASET_PATH="data"
-OUTPUT_DIR="output/qwen_foodpo_test"
+# 使用BETA_SCALE作为输出目录的一部分，避免结果覆盖
+OUTPUT_DIR="output/qwen_foodpo_scale_${BETA_SCALE}"
 
 # 训练参数 - 适合小数据集且优化内存使用
 MICRO_BATCH_SIZE=1            # 小批量大小，避免梯度更新过大
 GRADIENT_ACCUMULATION_STEPS=1 # 减少梯度累积步数，降低内存压力
 LEARNING_RATE=1e-4            # 提高学习率以便在少量数据上快速学习
-EPOCHS=1                      # 增加轮次以便在小数据集上充分学习
+EPOCHS=1                      # 轮次数量
 MAX_SEQ_LEN=512               # 减小序列最大长度以减少内存使用
 WARMUP_RATIO=0.1              # 增加预热比例以稳定初期训练
 
-# ====================== 动态beta参数设置 ======================
-# 这是FooDPO算法的核心参数，控制困惑度对beta的影响程度
-# 值越大，困惑度对beta的影响越大；值越小，算法越接近标准DPO
-BETA_SCALE=0.1                # 动态beta缩放因子[0.1-1.0之间]
-# ============================================================
-
-# 设置wandb配置
+# 设置wandb配置 - 使用唯一的实验名称
 export WANDB_PROJECT="qwen-foodpo" 
-export WANDB_NAME="qwen1.5-0.5B-foodpo-small-data-memory-optimized"
+export WANDB_NAME="qwen1.5-0.5B-foodpo-scale-${BETA_SCALE}"
 
 # 清理上次运行的输出目录（如果需要）
 if [ -d "$OUTPUT_DIR" ]; then
@@ -78,8 +83,11 @@ if [ -d "$OUTPUT_DIR" ]; then
     rm -rf "$OUTPUT_DIR"
 fi
 
-echo "开始运行内存优化版的fooDPO训练..."
-echo "当前动态beta缩放系数: $BETA_SCALE"
+echo "========================================================"
+echo "开始运行FooDPO训练实验，动态beta缩放系数: $BETA_SCALE"
+echo "输出目录: $OUTPUT_DIR"
+echo "WandB实验: $WANDB_NAME"
+echo "========================================================"
 
 # 运行训练命令 - 使用MPS设备而非CUDA，添加内存优化选项
 llamafactory-cli train \
@@ -126,4 +134,5 @@ llamafactory-cli train \
     --optim adamw_torch \
     --gradient_checkpointing true
 
-echo "训练完成！检查输出目录: $OUTPUT_DIR" 
+echo "训练完成！结果保存在目录: $OUTPUT_DIR"
+echo "请在WandB界面中查看实验: $WANDB_NAME" 
