@@ -1,0 +1,51 @@
+### model
+model_name_or_path: /Users/gongqian/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: q_proj,v_proj  # 减少LoRA目标层，降低内存消耗
+pref_beta: 0.1  # 已设置beta值
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+
+### dataset
+dataset: dpo_zh_demo
+template: qwen
+cutoff_len: 384
+max_samples: 50
+overwrite_cache: true
+preprocessing_num_workers: 2
+
+### output
+output_dir: output/qwen-0.5B/lora/dpo_single_run_beta0.1_20250303_2120
+logging_steps: 2
+save_steps: 10
+plot_loss: true
+overwrite_output_dir: output/qwen-0.5B/lora/dpo_single_run_beta0.1_20250303_2120
+report_to: ["wandb"]
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 2
+learning_rate: 0.0001
+num_train_epochs: 1.0
+lr_scheduler_type: constant
+warmup_ratio: 0.03
+use_mps_device: true
+gradient_checkpointing: true
+optim: adamw_torch
+fp16: false
+bf16: false
+max_grad_norm: 0.3
+
+### eval
+eval_dataset: dpo_zh_demo
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 5
+
+### wandb配置
+run_name: single_run_beta_0.1

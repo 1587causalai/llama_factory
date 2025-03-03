@@ -1,0 +1,45 @@
+### model
+model_name_or_path: /Users/gongqian/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+
+### dataset
+dataset: dpo_zh_demo  # 使用中文数据集
+template: default
+cutoff_len: 512       # 针对小模型减小序列长度
+max_samples: 100      # 限制样本数量加快训练
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: output/qwen-0.5B/lora/dpo
+logging_steps: 10
+save_steps: 50
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 0.0001
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+use_mps_device: true  # 适用于Mac设备
+gradient_checkpointing: true  # 减少内存使用
+
+### eval
+# 二选一：使用eval_dataset或val_size
+eval_dataset: dpo_zh_demo
+# val_size: 0.1
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 50 

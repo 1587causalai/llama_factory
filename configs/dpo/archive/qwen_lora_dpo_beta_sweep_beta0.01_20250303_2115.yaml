@@ -1,0 +1,51 @@
+### model
+model_name_or_path: /Users/gongqian/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: q_proj,v_proj  # 减少LoRA目标层，降低内存消耗
+pref_beta: 0.01  # 已设置beta值
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+
+### dataset
+dataset: dpo_zh_demo  # 使用中文数据集
+template: qwen  # 使用Qwen特定模板
+cutoff_len: 384       # 进一步减小序列长度以降低内存消耗
+max_samples: 50      # 减少样本数量加快训练
+overwrite_cache: true
+preprocessing_num_workers: 2  # 减少并行工作进程数
+
+### output
+output_dir: output/qwen-0.5B/lora/dpo_beta_sweep_beta0.01_20250303_2115
+logging_steps: 2      # 减小日志记录间隔，获取更多数据点
+save_steps: 10        # 减小保存间隔
+plot_loss: true
+overwrite_output_dir: output/qwen-0.5B/lora/dpo_beta_sweep_beta0.01_20250303_2115
+report_to: ["wandb"]  # 使用wandb而非tensorboard
+
+### train
+per_device_train_batch_size: 1  # 减小批处理大小
+gradient_accumulation_steps: 2  # 减少梯度累积步数，增加更新频率
+learning_rate: 0.0001
+num_train_epochs: 1.0
+lr_scheduler_type: constant  # 使用恒定学习率简化训练
+warmup_ratio: 0.03
+use_mps_device: true  # 启用Metal性能加速
+gradient_checkpointing: true  # 减少内存使用
+optim: adamw_torch  # 使用torch版本的优化器可能在Mac上更稳定
+fp16: false  # 在Mac上禁用fp16
+bf16: false  # 在Mac上禁用bf16
+max_grad_norm: 0.3  # 限制梯度裁剪值，提高稳定性
+
+### eval
+eval_dataset: dpo_zh_demo
+per_device_eval_batch_size: 1  # 减小评估批处理大小
+eval_strategy: steps
+eval_steps: 5  # 减小评估间隔，获取更多数据点
+
+### wandb配置
+run_name: qwen_dpo_beta_0.01
