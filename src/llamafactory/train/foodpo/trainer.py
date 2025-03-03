@@ -326,6 +326,17 @@ class CustomFooDPOTrainer(DPOTrainer):
         
         # 添加困惑度指标
         metrics[f"{prefix}prompt_perplexity"] = prompt_perplexity.mean().item()
+        
+        # 添加log困惑度指标
+        log_ppl = torch.log(torch.clamp(prompt_perplexity, min=1.0)).mean().item()
+        metrics[f"{prefix}log_prompt_perplexity"] = log_ppl
+        
+        # 计算并记录动态beta
+        if hasattr(self.finetuning_args, "pref_beta_scale") and self.finetuning_args.pref_beta_scale > 0:
+            dynamic_beta_value = self.finetuning_args.pref_beta_scale * log_ppl * self.beta
+            metrics[f"{prefix}dynamic_beta"] = dynamic_beta_value
+        else:
+            metrics[f"{prefix}dynamic_beta"] = self.beta
 
         return losses.mean(), metrics
 

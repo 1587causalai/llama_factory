@@ -262,8 +262,9 @@ class CustomBetaDPOTrainer(DPOTrainer):
                 beta_value
             )
 
-        # 记录当前使用的beta值
-        self.log({"beta/current_value": beta_value})
+        # 记录当前使用的beta值 - 修复：直接添加到metrics字典，而不是调用log方法
+        if self.is_world_process_zero():
+            self._stored_metrics["train"]["beta/current_value"].append(float(beta_value))
         
         return losses, chosen_rewards, rejected_rewards
 
@@ -405,7 +406,7 @@ class CustomBetaDPOTrainer(DPOTrainer):
         """
         # 添加当前batch的指标
         for k, v in self._stored_metrics["train"].items():
-            if len(v) > 0:
+            if isinstance(v, list) and len(v) > 0:
                 logs[k] = v[-1]
                 
         if kwargs.get("clear_metrics", True):
