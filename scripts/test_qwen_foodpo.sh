@@ -65,7 +65,7 @@ WARMUP_RATIO=0.1              # 增加预热比例以稳定初期训练
 # ====================== 动态beta参数设置 ======================
 # 这是FooDPO算法的核心参数，控制困惑度对beta的影响程度
 # 值越大，困惑度对beta的影响越大；值越小，算法越接近标准DPO
-BETA_SCALE=0.5                # 动态beta缩放因子[0.1-1.0之间]
+BETA_SCALE=0.1                # 动态beta缩放因子[0.1-1.0之间]
 # ============================================================
 
 # 设置wandb配置
@@ -118,7 +118,6 @@ llamafactory-cli train \
     --load_best_model_at_end true \
     --metric_for_best_model "eval_rewards/margins" \
     --greater_is_better true \
-    --early_stopping_patience 3 \
     --group_by_length false \
     --dataloader_num_workers 0 \
     --log_level info \
