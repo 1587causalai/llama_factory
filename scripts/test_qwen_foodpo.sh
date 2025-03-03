@@ -24,6 +24,18 @@
 # 4. 使用8位优化器减少优化器状态内存占用
 # 5. 设置环境变量PYTORCH_MPS_HIGH_WATERMARK_RATIO控制MPS内存使用
 #
+# 【动态beta设置】- 重要参数
+# FooDPO使用基于困惑度的动态beta策略: β(x) = c · log(PPL(x)) · β
+# 其中:
+# - PPL(x)是模型对输入提示x的困惑度
+# - c是通过pref_beta_scale参数控制的缩放系数
+# - β是基础beta值(通过pref_beta参数设置)
+#
+# 【pref_beta_scale参数推荐值】
+# - 0.1-0.3: 困惑度对beta影响较小，训练更接近标准DPO
+# - 0.4-0.7: 推荐范围，提供适度的动态调整
+# - 0.8-1.0: 困惑度影响较大，可能导致训练不稳定
+#
 # 【wandb配置】
 # 使用Weights & Biases进行训练监控
 # 运行前确保已经登录: wandb login
@@ -50,6 +62,12 @@ EPOCHS=1                      # 增加轮次以便在小数据集上充分学习
 MAX_SEQ_LEN=512               # 减小序列最大长度以减少内存使用
 WARMUP_RATIO=0.1              # 增加预热比例以稳定初期训练
 
+# ====================== 动态beta参数设置 ======================
+# 这是FooDPO算法的核心参数，控制困惑度对beta的影响程度
+# 值越大，困惑度对beta的影响越大；值越小，算法越接近标准DPO
+BETA_SCALE=0.5                # 动态beta缩放因子[0.1-1.0之间]
+# ============================================================
+
 # 设置wandb配置
 export WANDB_PROJECT="qwen-foodpo" 
 export WANDB_NAME="qwen1.5-0.5B-foodpo-small-data-memory-optimized"
@@ -61,6 +79,7 @@ if [ -d "$OUTPUT_DIR" ]; then
 fi
 
 echo "开始运行内存优化版的fooDPO训练..."
+echo "当前动态beta缩放系数: $BETA_SCALE"
 
 # 运行训练命令 - 使用MPS设备而非CUDA，添加内存优化选项
 llamafactory-cli train \
@@ -88,6 +107,7 @@ llamafactory-cli train \
     --lora_dropout 0.05 \
     --stage foodpo \
     --pref_beta 0.1 \
+    --pref_beta_scale $BETA_SCALE \
     --fp16 false \
     --use_mps_device true \
     --plot_loss true \
@@ -95,6 +115,10 @@ llamafactory-cli train \
     --ddp_find_unused_parameters false \
     --eval_strategy steps \
     --eval_steps 5 \
+    --load_best_model_at_end true \
+    --metric_for_best_model "eval_rewards/margins" \
+    --greater_is_better true \
+    --early_stopping_patience 3 \
     --group_by_length false \
     --dataloader_num_workers 0 \
     --log_level info \
