@@ -1,16 +1,58 @@
-# Copyright 2025 the LlamaFactory team.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+LLaMA-Factory 命令行接口 (CLI) 实现
+==================================
+
+本文件实现了LLaMA-Factory框架的命令行接口，作为用户与框架交互的主要入口点。
+脚本解析用户输入的命令并调用相应的功能模块执行特定任务。
+
+工作原理:
+--------
+1. 用户通过`llamafactory-cli <命令> [参数]`形式调用
+2. main()函数解析第一个参数(命令)，并根据Command枚举类分发到相应处理函数
+3. 对于训练命令(train)，会调用tuner.py中的run_exp函数，根据配置文件执行不同训练流程
+
+支持的主要命令:
+-------------
+- train: 训练模型（包括SFT、RM、DPO、PPO等多种训练方式）
+- eval: 评估模型
+- chat: 命令行聊天界面
+- export: 合并LoRA适配器并导出模型
+- webchat: Web聊天界面
+- webui: 启动LlamaBoard界面
+- api: 启动OpenAI风格API服务器
+
+DPO训练原理与流程:
+---------------
+DPO(Direct Preference Optimization)是一种基于人类偏好的训练方法，不同于PPO，它无需训练奖励模型。
+
+DPO训练流程:
+1. 命令行输入: llamafactory-cli train <配置文件.yaml>，其中配置指定stage=dpo
+2. cli.py将命令转发到tuner.py中的run_exp函数
+3. 根据stage=dpo参数，调用train/dpo/workflow.py中的run_dpo函数
+4. run_dpo函数执行以下核心步骤:
+   - 加载tokenizer和模板
+   - 准备成对偏好数据集(包含query、chosen和rejected响应)
+   - 加载模型和参考模型(reference model)
+   - 初始化CustomDPOTrainer并执行训练
+   - 训练过程优化策略模型使其生成的响应更接近人类偏好的响应
+
+DPO算法核心:
+- 不直接最大化奖励，而是最小化策略与参考策略之间的KL散度
+- 目标函数结合了生成人类偏好响应的概率和保持接近参考模型的平衡
+- DPO损失函数: L = -log(σ(β·(r_w(x,y_w) - r_w(x,y_l))))，其中:
+  * σ是sigmoid函数
+  * β是温度参数(通常为0.1-1)
+  * r_w是模型对输入x生成响应y的隐式奖励
+  * y_w是人类偏好的响应，y_l是人类不偏好的响应
+  
+实现特点:
+- 使用成对数据(chosen/rejected)进行训练
+- 训练更稳定，不需要复杂的PPO强化学习环境
+- 效果与PPO相当但训练速度更快，参数调优更简单
+"""
 
 import os
 import random

@@ -63,6 +63,7 @@ def _training_function(config: Dict[str, Any]) -> None:
 
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
 
+    # 既然都是微调模型，为什么SFT需要 generating_args 生成文本，而DPO却不需要？
     if finetuning_args.stage == "pt":
         run_pt(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "sft":

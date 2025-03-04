@@ -8,7 +8,7 @@ do_train: true
 finetuning_type: lora
 lora_rank: 8
 lora_target: q_proj,v_proj  # 减少LoRA目标层，降低内存消耗
-pref_beta: 0.1
+pref_beta: 0.1  # 已设置beta值
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
 
 ### dataset
@@ -20,11 +20,11 @@ overwrite_cache: true
 preprocessing_num_workers: 2
 
 ### output
-output_dir: output/qwen-0.5B/lora/dpo_single_run
+output_dir: output/qwen-0.5B/lora/dpo_test_run_beta0.1_20250303_2142
 logging_steps: 2
 save_steps: 10
 plot_loss: true
-overwrite_output_dir: true
+overwrite_output_dir: output/qwen-0.5B/lora/dpo_test_run_beta0.1_20250303_2142
 report_to: ["wandb"]
 
 ### train
@@ -48,4 +48,4 @@ eval_strategy: steps
 eval_steps: 5
 
 ### wandb配置
-run_name: qwen_dpo_single_run
+run_name: test_run_beta_0.1
