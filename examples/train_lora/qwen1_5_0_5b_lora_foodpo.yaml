@@ -10,6 +10,7 @@ lora_rank: 8
 lora_target: all
 pref_beta: 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+pref_beta_scale: 0.5  # 控制动态beta缩放因子
 
 ### dataset
 dataset: hh_rlhf_en
