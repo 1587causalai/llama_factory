@@ -347,25 +347,16 @@ def run_foodpo_workflow(config_path: str):
     logger.info(f"开始FooDPO工作流程，配置文件: {config_path}")
     
     try:
-        # 设置WANDB环境变量（不依赖配置文件）
-        if not os.environ.get("WANDB_PROJECT"):
-            os.environ["WANDB_PROJECT"] = "foodpo"
-            logger.info("通过环境变量设置WANDB项目名称为: foodpo")
-            
-        if not os.environ.get("WANDB_NAME"):
-            os.environ["WANDB_NAME"] = "qwen1.5-0.5b-foodpo-test"
-            logger.info("通过环境变量设置WANDB运行名称为: qwen1.5-0.5b-foodpo-test")
-            
-        # 打印WANDB配置信息
-        logger.info("WANDB配置信息:")
-        logger.info(f"  项目名称: {os.environ.get('WANDB_PROJECT', '未设置')}")
-        logger.info(f"  运行名称: {os.environ.get('WANDB_NAME', '未设置')}")
-            
         # 1. 处理参数
         model_args, data_args, training_args, finetuning_args, generating_args = process_args(config_path)
         
         # 打印报告工具信息
         logger.info(f"  报告工具: {training_args.report_to}")
+        
+        # 也可以通过环境变量设置WANDB项目
+        if not hasattr(training_args, 'wandb_project') or not training_args.wandb_project:
+            os.environ["WANDB_PROJECT"] = "foodpo"
+            logger.info("通过环境变量设置WANDB项目名称为: foodpo")
         
         # 2. 准备tokenizer和模型
         tokenizer, tokenizer_module, template, model, ref_model = prepare_tokenizer_and_model(
@@ -427,11 +418,12 @@ def main():
     try:
         # 解析命令行参数
         if len(sys.argv) < 2:
-            logger.error("请提供配置文件路径！")
-            logger.info("用法: python run_foodpo_detailed.py <config_path>")
-            return 1
+            logger.warning("未提供配置文件路径，使用默认配置文件路径")
+            config_path = "examples/train_lora/qwen1_5_0_5b_lora_foodpo.yaml"
+        else:
+            config_path = sys.argv[1]
         
-        config_path = sys.argv[1]
+        logger.info(f"使用配置文件: {config_path}")
         
         # 运行FooDPO工作流程
         return run_foodpo_workflow(config_path)
@@ -445,4 +437,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main()
