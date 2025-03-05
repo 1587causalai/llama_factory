@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 """
-详细拆解的fooDPO训练脚本 (fooDPO Training Script with Detailed Components)
+详细拆解的DPO训练脚本 (DPO Training Script with Detailed Components)
 ==============================================================
 
-此脚本对LLaMA-Factory中的fooDPO训练流程进行了详细拆解，主要用于教学和研究目的。
+此脚本对LLaMA-Factory中的DPO训练流程进行了详细拆解，主要用于教学和研究目的。
 它将官方实现的各个组件和过程分离为独立函数，并添加了丰富的调试信息和注释。
 
 设计目的:
 --------
-1. 教学展示 - 清晰展示fooDPO训练的各个关键步骤和组件
-2. 原理解析 - 通过代码注释和调试输出帮助理解fooDPO算法原理
+1. 教学展示 - 清晰展示DPO训练的各个关键步骤和组件
+2. 原理解析 - 通过代码注释和调试输出帮助理解DPO算法原理
 3. 组件解耦 - 将训练流程分解为多个独立函数，便于单独分析和修改
 
 主要功能模块:
@@ -21,19 +21,19 @@
 - prepare_tokenizer_and_template: 准备tokenizer和模板
 - prepare_model: 加载和配置模型
 - prepare_dataset: 准备数据集
-- setup_foodpo_trainer: 设置fooDPO训练器
+- setup_dpo_trainer: 设置DPO训练器
 - run_training: 执行训练过程
 
 与其他脚本的区别:
 --------------
-- 相比run_foodpo_detailed.py: 本脚本更侧重于组件和原理的展示，添加了更多调试功能
-- 相比run_foodpo_training.py: 本脚本完全拆解了训练流程，牺牲了简洁性换取更高的可读性和教学价值
+- 相比run_dpo_detailed.py: 本脚本更侧重于组件和原理的展示，添加了更多调试功能
+- 相比run_dpo_training.py: 本脚本完全拆解了训练流程，牺牲了简洁性换取更高的可读性和教学价值
 
 使用场景:
 --------
-- 学习和理解fooDPO训练原理
+- 学习和理解DPO训练原理
 - 调试特定训练组件
-- 修改和扩展fooDPO训练流程
+- 修改和扩展DPO训练流程
 """
 
 import os
@@ -221,7 +221,7 @@ def calculate_avg_tokens_per_sample(dataset, tokenizer, keys=("query", "response
     return total_tokens / len(dataset)
 
 
-def setup_foodpo_trainer(
+def setup_dpo_trainer(
     model, 
     ref_model, 
     training_args, 
@@ -233,7 +233,7 @@ def setup_foodpo_trainer(
     dataset_module
 ):
     """
-    设置fooDPO训练器
+    设置DPO训练器
     
     Args:
         model: 模型
@@ -247,9 +247,9 @@ def setup_foodpo_trainer(
         dataset_module: 数据集模块
     
     Returns:
-        fooDPO训练器
+        DPO训练器
     """
-    print("设置fooDPO训练器...")
+    print("设置DPO训练器...")
     
     # 计算训练预估速度
     train_dataset = dataset_module.get("train_dataset")
@@ -271,7 +271,7 @@ def setup_foodpo_trainer(
             avg_tokens = total_tokens / sample_count
             print(f"每个样本平均token数: {avg_tokens:.2f}")
     
-    # 创建fooDPO训练器
+    # 创建DPO训练器
     trainer = CustomDPOTrainer(
         model=model,
         ref_model=ref_model,
@@ -322,10 +322,10 @@ def run_training(trainer, training_args):
 
 def main():
     """
-    fooDPO训练主函数
+    DPO训练主函数
     """
     print("=" * 50)
-    print("开始fooDPO训练详细流程")
+    print("开始DPO训练详细流程")
     print("=" * 50)
     
     try:
@@ -343,7 +343,7 @@ def main():
         dataset_module = prepare_dataset(template, tokenizer_module, model_args, data_args, training_args)
         
         # 5. 设置训练器
-        trainer = setup_foodpo_trainer(
+        trainer = setup_dpo_trainer(
             model=model,
             ref_model=create_ref_model(model, finetuning_args),
             training_args=training_args,
@@ -373,7 +373,7 @@ def main():
             trainer.save_metrics("eval", eval_results)
         
         print("=" * 50)
-        print("fooDPO训练流程完成")
+        print("DPO训练流程完成")
         print("=" * 50)
         return 0
         

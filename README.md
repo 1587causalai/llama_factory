@@ -885,3 +885,44 @@ This repo benefits from [PEFT](https://github.com/huggingface/peft), [TRL](https
 ## Star History
 
 ![Star History Chart](https://api.star-history.com/svg?repos=hiyouga/LLaMA-Factory&type=Date)
+
+# fooDPO分支
+
+这是用于开发和测试fooDPO算法的分支，从`dpo-baseline-training`分支创建。
+
+## fooDPO算法概述
+
+fooDPO是对标准DPO(Direct Preference Optimization)的改进版本，主要特点是引入了动态beta机制，基于输入文本的困惑度(perplexity)自适应调整beta值，使得模型能够更好地处理不同难度的偏好学习。
+
+公式：β(x) = c · log(PPL(x)) · β_base
+
+其中：
+- β(x)是动态beta值
+- c是缩放因子(pref_beta_scale)
+- PPL(x)是输入文本的困惑度
+- β_base是基础beta值(pref_beta)
+
+## 关键特点
+
+1. **动态β值**：根据输入文本的困惑度自适应调整β值
+2. **支持多种偏好学习损失函数**：
+   - 标准DPO(sigmoid)
+   - ORPO(Odds Ratio PO)
+   - SimPO(Simple PO)
+
+## 使用方法
+
+在配置文件中指定stage为"foodpo"：
+
+```yaml
+stage: foodpo
+pref_beta: 0.2  # 基础beta值
+pref_beta_scale: 1.5  # 动态beta缩放因子
+pref_loss: sigmoid  # 可选: sigmoid, orpo, simpo
+```
+
+## 训练命令
+
+```bash
+llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_fooDPO.yaml
+```

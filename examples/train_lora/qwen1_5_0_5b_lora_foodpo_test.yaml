@@ -8,34 +8,33 @@ do_train: true
 finetuning_type: lora
 lora_rank: 8
 lora_target: all
-pref_beta: 0.2  # fooDPO基础beta值
-pref_beta_scale: 1.5  # 动态beta缩放因子: β(x) = c · log(PPL(x)) · β
-pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
-# fooDPO 特定参数
-foo_factor: 0.5  # fooDPO算法的特殊参数
-dynamic_weight: true  # 启用动态权重
+pref_beta: 0.1
+pref_beta_scale: 0.0  # 暂时设为0以禁用动态beta功能，方便调试
+
+### 其他参数根据我们的算法去调整
+
 
 ### dataset
-dataset: hh_rlhf_en
+dataset: dpo_en_demo
 template: qwen
 cutoff_len: 1024
-max_samples: 100  # 减少样本数量以加快测试
+max_samples: 10  # 减少样本数量以加快测试
 overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/fooDPO
+output_dir: saves/qwen1.5-0.5b/lora/foodpo_test
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
-report_to: [wandb]
+report_to: []
 
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 2
-learning_rate: 2.0e-5  # 为fooDPO稍微增加学习率
-num_train_epochs: 3.0
+learning_rate: 1.0e-5  # 稍微增加学习率
+num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
@@ -48,4 +47,4 @@ eval_strategy: steps
 eval_steps: 10
 
 # 运行命令
-# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_fooDPO.yaml 
+# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_foodpo_test.yaml 

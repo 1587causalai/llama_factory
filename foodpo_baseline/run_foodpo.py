@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-运行fooDPO训练的Python脚本
-等价于运行: llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_fooDPO.yaml
+运行DPO训练的Python脚本
+等价于运行: llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_dpo_test.yaml
 但直接使用LLaMA-Factory内部API，而不是通过子进程调用命令行
 """
 
@@ -18,12 +18,12 @@ from llamafactory.extras.misc import get_device_count, is_env_enabled, use_ray
 
 def main():
     """
-    使用LLaMA-Factory的内部API运行fooDPO训练
+    使用LLaMA-Factory的内部API运行DPO训练
     """
-    print("开始fooDPO训练...")
+    print("开始DPO训练...")
     
     # 设置配置文件路径
-    config_path = "examples/train_lora/qwen1_5_0_5b_lora_fooDPO.yaml"
+    config_path = "examples/train_lora/qwen1_5_0_5b_lora_dpo_test.yaml"
     
     try:
         # 保存原始的命令行参数
@@ -39,7 +39,7 @@ def main():
         # 恢复原始的命令行参数
         sys.argv = original_argv
         
-        print("fooDPO训练完成！")
+        print("DPO训练完成！")
         return 0
     
     except Exception as e:

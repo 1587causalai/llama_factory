@@ -3,7 +3,7 @@ model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
 
 ### method
-stage: foodpo
+stage: betadpo
 do_train: true
 finetuning_type: lora
 lora_rank: 8
@@ -21,7 +21,7 @@ overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/foodpo_scale0.1
+output_dir: saves/qwen1.5-0.5b/lora/betadpo_scale0.1
 logging_steps: 5
 save_steps: 50
 plot_loss: true
@@ -47,6 +47,6 @@ eval_strategy: steps
 eval_steps: 10 
 
 # 运行命令
-# 设置wandb项目：export WANDB_PROJECT="foodpo" WANDB_NAME="qwen1.5-0.5b-foodpo-test"
-# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_foodpo.yaml 
-# python dpo_baseline/run_foodpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_foodpo.yaml
+# 设置wandb项目：export WANDB_PROJECT="foodpo" 
+# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml 
+# python dpo_baseline/run_foodpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml

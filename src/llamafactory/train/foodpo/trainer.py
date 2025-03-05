@@ -1,20 +1,6 @@
-# Copyright 2024 HuggingFace Inc. and the LlamaFactory team.
-#
-# This code is inspired by the HuggingFace's TRL library.
-# https://github.com/huggingface/trl/blob/v0.8.0/trl/trainer/dpo_trainer.py
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""beta dpo 算法
 
+"""
 import warnings
 from collections import defaultdict
 from contextlib import nullcontext
@@ -167,40 +153,11 @@ class CustomFooDPOTrainer(DPOTrainer):
         """
         实现支持动态beta的标准DPO损失
         """
-        # 添加调试信息打印
-        print("="*80)
-        print("调试信息 - 张量维度:")
-        print(f"  policy_chosen_logps: {policy_chosen_logps.shape}")
-        print(f"  policy_rejected_logps: {policy_rejected_logps.shape}")
-        print(f"  reference_chosen_logps: {reference_chosen_logps.shape}")
-        print(f"  reference_rejected_logps: {reference_rejected_logps.shape}")
         
-        beta = dynamic_beta if dynamic_beta is not None else self.beta
-        
-        if isinstance(beta, torch.Tensor):
-            print(f"  dynamic_beta: {beta.shape}")
-            
-            # 维度修正 - 确保beta与其他张量维度匹配
-            if beta.dim() > 0 and beta.size(0) != policy_chosen_logps.size(0):
-                print(f"  警告: beta维度 {beta.size(0)} 与 logps维度 {policy_chosen_logps.size(0)} 不匹配")
-                
-                # 如果beta维度是batch_size的2倍(可能一个样本一个beta而不是一对样本一个beta)
-                if beta.size(0) == policy_chosen_logps.size(0) * 2:
-                    print("  尝试修正: 将beta重塑为每对样本一个值")
-                    beta = beta.view(-1, 2).mean(dim=1)
-                    print(f"  修正后beta维度: {beta.shape}")
-                else:
-                    print("  使用标量beta代替")
-                    beta = torch.tensor(self.beta, device=policy_chosen_logps.device)
-        else:
-            print(f"  使用标量beta: {beta}")
+        beta = dynamic_beta if dynamic_beta is not None else self.beta # beta.shape = [batch_size]
             
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         ref_logratios = reference_chosen_logps - reference_rejected_logps
-        
-        print(f"  pi_logratios: {pi_logratios.shape}")
-        print(f"  ref_logratios: {ref_logratios.shape}")
-        print("="*80)
         
         logits = beta * (pi_logratios - ref_logratios)
         
@@ -228,32 +185,14 @@ class CustomFooDPOTrainer(DPOTrainer):
         """
         计算偏好学习的损失，使用动态beta
         """
-        # 打印perplexity信息
-        if perplexity is not None:
-            print("="*80)
-            print("调试信息 - perplexity:")
-            print(f"  perplexity shape: {perplexity.shape}")
-            print(f"  policy_chosen_logps shape: {policy_chosen_logps.shape}")
-            
-            # 维度检查和修正
-            if perplexity.dim() > 0 and perplexity.size(0) != policy_chosen_logps.size(0):
-                print(f"  警告: perplexity维度 {perplexity.size(0)} 与 logps维度 {policy_chosen_logps.size(0)} 不匹配")
-                
-                # 如果perplexity维度是batch_size的2倍
-                if perplexity.size(0) == policy_chosen_logps.size(0) * 2:
-                    print("  尝试修正: 将perplexity重塑为每对样本一个值")
-                    perplexity = perplexity.view(-1, 2).mean(dim=1)
-                    print(f"  修正后perplexity维度: {perplexity.shape}")
-            print("="*80)
-        
         # 计算动态beta: β(x) = c · log(PPL(x)) · β
         base_beta = self.beta
         if perplexity is not None and hasattr(self.finetuning_args, "pref_beta_scale") and self.finetuning_args.pref_beta_scale > 0:
             # 增加数值稳定性
             log_ppl = torch.log(torch.clamp(perplexity, min=1.0))
-            dynamic_beta = self.finetuning_args.pref_beta_scale * log_ppl * base_beta
-        else:
-            dynamic_beta = base_beta * torch.ones_like(policy_chosen_logps)
+            dynamic_beta = self.finetuning_args.pref_beta_scale * log_ppl * base_beta # dynamic_beta.shape = [batch_size]
+        else: # self.finetuning_args.pref_beta_scale = 0 以为beta不变, 和标准 dpo 实现相同
+            dynamic_beta = base_beta * torch.ones_like(policy_chosen_logps) # dynamic_beta.shape = [batch_size]
         
         # 使用动态beta替代固定beta，其余逻辑与原实现相同
         if not self.finetuning_args.use_ref_model:
@@ -283,17 +222,17 @@ class CustomFooDPOTrainer(DPOTrainer):
         """扩展方法，额外返回计算的困惑度"""
         if self.finetuning_args.use_ref_model:
             batch = nested_detach(batch, clone=True)  # 避免错误
-
-        all_logits: "torch.Tensor" = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
-        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
+        
+        all_logits: "torch.Tensor" = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32) # batch.keys() = ['input_ids', 'attention_mask', 'labels']
+        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"]) # all_logps.shape = [batch_size * 2, seq_len], valid_length.shape = [batch_size * 2]
         
         # 计算prompt的困惑度 - 使用现有的计算，避免额外前向传播
-        prompt_perplexity = self.calculate_prompt_perplexity(batch, all_logits)
+        prompt_perplexity = self.calculate_prompt_perplexity(batch, all_logits)  # perplexity.shape = [batch_size]
         
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             all_logps = all_logps / valid_length
 
-        batch_size = batch["input_ids"].size(0) // 2
+        batch_size = batch["input_ids"].size(0) // 2  # batch_size 是 input_ids.shape[0] 的一半, 因为input_ids是chosen和rejected的拼接, batch_size 是 prompt的batch_size. 
         chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
         chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
         chosen_length, _ = valid_length.split(batch_size, dim=0)
@@ -381,8 +320,7 @@ class CustomFooDPOTrainer(DPOTrainer):
         
         # 计算并记录动态beta
         if hasattr(self.finetuning_args, "pref_beta_scale") and self.finetuning_args.pref_beta_scale > 0:
-            dynamic_beta_value = self.finetuning_args.pref_beta_scale * log_ppl * self.beta
-            metrics[f"{prefix}dynamic_beta"] = dynamic_beta_value
+            metrics[f"{prefix}dynamic_beta"] = self.finetuning_args.pref_beta_scale * log_ppl * self.beta
         else:
             metrics[f"{prefix}dynamic_beta"] = self.beta
 
@@ -477,9 +415,9 @@ class CustomFooDPOTrainer(DPOTrainer):
             perplexity = torch.exp(-avg_log_probs)
             
             # 将困惑度扩展到所有样本（chosen和rejected共享相同prompt）
-            expanded_perplexity = torch.cat([perplexity, perplexity], dim=0)
+            # expanded_perplexity = torch.cat([perplexity, perplexity], dim=0) 
             
-            return expanded_perplexity
+            return perplexity
         
         # 如果没有提供logits，返回一个默认值1.0（log(1.0)=0，不影响计算）
-        return torch.ones(input_ids.size(0), device=input_ids.device) 
+        return torch.ones(batch_size, device=input_ids.device) 
