@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 pref_beta: 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
-pref_beta_scale: 0.1  # 暂时设为0以禁用动态beta功能，方便调试
+pref_beta_scale: 0.01  # 暂时设为0以禁用动态beta功能，方便调试
 
 ### dataset
 dataset: hh_rlhf_en
@@ -21,7 +21,7 @@ overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/betadpo_scale0.1
+output_dir: saves/qwen1.5-0.5b/lora/betadpo_scale0.01
 logging_steps: 5
 save_steps: 50
 plot_loss: true
