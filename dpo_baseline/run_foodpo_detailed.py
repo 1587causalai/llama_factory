@@ -347,19 +347,25 @@ def run_foodpo_workflow(config_path: str):
     logger.info(f"开始FooDPO工作流程，配置文件: {config_path}")
     
     try:
+        # 设置WANDB环境变量（不依赖配置文件）
+        if not os.environ.get("WANDB_PROJECT"):
+            os.environ["WANDB_PROJECT"] = "foodpo"
+            logger.info("通过环境变量设置WANDB项目名称为: foodpo")
+            
+        if not os.environ.get("WANDB_NAME"):
+            os.environ["WANDB_NAME"] = "qwen1.5-0.5b-foodpo-test"
+            logger.info("通过环境变量设置WANDB运行名称为: qwen1.5-0.5b-foodpo-test")
+            
+        # 打印WANDB配置信息
+        logger.info("WANDB配置信息:")
+        logger.info(f"  项目名称: {os.environ.get('WANDB_PROJECT', '未设置')}")
+        logger.info(f"  运行名称: {os.environ.get('WANDB_NAME', '未设置')}")
+            
         # 1. 处理参数
         model_args, data_args, training_args, finetuning_args, generating_args = process_args(config_path)
         
-        # 打印WANDB配置信息
-        logger.info("WANDB配置信息:")
-        logger.info(f"  项目名称: {getattr(training_args, 'wandb_project', '未设置')}")
-        logger.info(f"  运行名称: {getattr(training_args, 'wandb_run_name', '未设置')}")
+        # 打印报告工具信息
         logger.info(f"  报告工具: {training_args.report_to}")
-        
-        # 也可以通过环境变量设置WANDB项目
-        if not hasattr(training_args, 'wandb_project') or not training_args.wandb_project:
-            os.environ["WANDB_PROJECT"] = "foodpo"
-            logger.info("通过环境变量设置WANDB项目名称为: foodpo")
         
         # 2. 准备tokenizer和模型
         tokenizer, tokenizer_module, template, model, ref_model = prepare_tokenizer_and_model(

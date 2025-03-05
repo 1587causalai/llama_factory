@@ -27,9 +27,7 @@ save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 report_to: [wandb]
-# wandb配置
-wandb_project: foodpo  # 设置专门的wandb项目名称
-wandb_run_name: qwen1.5-0.5b-foodpo-beta-test  # 设置此次运行的名称
+# wandb配置通过环境变量设置：export WANDB_PROJECT="foodpo"
 
 ### train
 per_device_train_batch_size: 2  # 增加批量大小，因为是更小的模型
@@ -49,4 +47,5 @@ eval_strategy: steps
 eval_steps: 10 
 
 # 运行命令
+# 设置wandb项目：export WANDB_PROJECT="foodpo" WANDB_NAME="qwen1.5-0.5b-foodpo-test"
 # llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_foodpo.yaml 
