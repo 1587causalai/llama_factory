@@ -350,6 +350,17 @@ def run_foodpo_workflow(config_path: str):
         # 1. 处理参数
         model_args, data_args, training_args, finetuning_args, generating_args = process_args(config_path)
         
+        # 打印WANDB配置信息
+        logger.info("WANDB配置信息:")
+        logger.info(f"  项目名称: {getattr(training_args, 'wandb_project', '未设置')}")
+        logger.info(f"  运行名称: {getattr(training_args, 'wandb_run_name', '未设置')}")
+        logger.info(f"  报告工具: {training_args.report_to}")
+        
+        # 也可以通过环境变量设置WANDB项目
+        if not hasattr(training_args, 'wandb_project') or not training_args.wandb_project:
+            os.environ["WANDB_PROJECT"] = "foodpo"
+            logger.info("通过环境变量设置WANDB项目名称为: foodpo")
+        
         # 2. 准备tokenizer和模型
         tokenizer, tokenizer_module, template, model, ref_model = prepare_tokenizer_and_model(
             model_args, finetuning_args, data_args, training_args, do_train=training_args.do_train
