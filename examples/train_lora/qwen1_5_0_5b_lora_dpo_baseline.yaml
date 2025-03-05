@@ -12,7 +12,7 @@ pref_beta: 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
 
 ### dataset
-dataset: dpo_en_demo
+dataset: hh_rlhf_en
 template: qwen
 cutoff_len: 1024  # 缩短长度以加快测试
 max_samples: 100  # 减少样本数量以加快测试
@@ -20,26 +20,29 @@ overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/dpo_test
+output_dir: saves/qwen1.5-0.5b/lora/dpo_baseline
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
-report_to: []
+report_to: [wandb]
 
 ### train
 per_device_train_batch_size: 2  # 增加批量大小，因为是更小的模型
 gradient_accumulation_steps: 2  # 减少梯度累积步骤
 learning_rate: 1.0e-5  # 稍微增加学习率
-num_train_epochs: 1.0  # 减少训练轮次以加快测试
+num_train_epochs: 3.0  # 减少训练轮次以加快测试
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
 
-### eval
-# eval_dataset: dpo_en_demo
-# val_size: 0.1
-# per_device_eval_batch_size: 2
-# eval_strategy: steps
-# eval_steps: 50 
+## eval
+# eval_dataset: hh_rlhf_en 用 validation set 做评估
+val_size: 0.1
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 10 
+
+# 运行命令
+# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_dpo_baseline.yaml 
