@@ -486,7 +486,7 @@ class FinetuningArguments(
         if self.stage == "ppo" and self.reward_model_type == "lora" and self.finetuning_type != "lora":
             raise ValueError("`reward_model_type` cannot be lora for Freeze/Full PPO training.")
 
-        if (self.stage == "dpo" or self.stage == "foodpo" or self.stage == "betadpo") and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
+        if (self.stage == "dpo" or self.stage == "foodpo" or self.stage == "betadpo" or self.stage == "ledpo") and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
             raise ValueError("`dpo_label_smoothing` is only valid for sigmoid loss function.")
 
         if self.use_llama_pro and self.finetuning_type == "full":
