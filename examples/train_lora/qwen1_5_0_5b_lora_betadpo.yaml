@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 pref_beta: 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
-pref_beta_scale: 0.01  # 暂时设为0以禁用动态beta功能，方便调试
+pref_beta_scale: 0.5  # 暂时设为0以禁用动态beta功能，方便调试
 
 ### dataset
 dataset: hh_rlhf_en
@@ -21,7 +21,7 @@ overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/betadpo_scale0.01
+output_dir: saves/qwen1.5-0.5b/lora/learn0.0001_scale0.5
 logging_steps: 5
 save_steps: 50
 plot_loss: true
@@ -32,7 +32,7 @@ report_to: [wandb]
 ### train
 per_device_train_batch_size: 2  # 增加批量大小，因为是更小的模型
 gradient_accumulation_steps: 2  # 减少梯度累积步骤
-learning_rate: 1.0e-5  # 稍微增加学习率
+learning_rate: 1.0e-4  # 稍微增加学习率
 num_train_epochs: 3.0  # 减少训练轮次以加快测试
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
@@ -47,6 +47,6 @@ eval_strategy: steps
 eval_steps: 10 
 
 # 运行命令
-# 设置wandb项目：export WANDB_PROJECT="foodpo" 
+# 设置wandb项目：export WANDB_PROJECT="betadpo" 
 # llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml 
-# python dpo_baseline/run_foodpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml
+# python dpo_baseline/run_betadpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml

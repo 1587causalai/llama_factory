@@ -1,3 +1,17 @@
+# Copyright 2025 the LlamaFactory team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """beta dpo 算法
 
 """
@@ -66,8 +80,16 @@ class CustomBetaDPOTrainer(DPOTrainer):
         self.ftx_gamma = finetuning_args.pref_ftx
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
-
+        
+        # 创建可学习的beta_scale参数（作为单独变量先保存）
+        beta_scale_param = torch.nn.Parameter(torch.tensor(finetuning_args.pref_beta_scale, dtype=torch.float32))
+        
+        # 调用Trainer初始化
         Trainer.__init__(self, model=model, **kwargs)
+        
+        # 将beta_scale设置为模型的属性（在Trainer初始化后）
+        self.model.beta_scale = beta_scale_param
+        
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
             raise AttributeError("Please update `transformers`.")
@@ -95,8 +117,51 @@ class CustomBetaDPOTrainer(DPOTrainer):
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
+        """
+        创建带有参数组的优化器，为beta_scale设置单独的参数组
+        """
         if self.optimizer is None:
-            self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
+            # 检查模型是否有beta_scale属性
+            if not hasattr(self.model, "beta_scale"):
+                # 如果没有beta_scale属性，使用原始方法创建优化器
+                self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
+                return super().create_optimizer()
+            
+            # 准备参数组
+            if hasattr(self.finetuning_args, "use_galore") and self.finetuning_args.use_galore:
+                # 当使用GaLore时，我们需要特殊处理
+                from ..trainer_utils import _create_galore_optimizer
+                self.optimizer = _create_galore_optimizer(self.model, self.args, self.finetuning_args)
+                # 添加beta_scale参数组
+                self.optimizer.add_param_group({"params": [self.model.beta_scale], "weight_decay": 0.0})
+            elif hasattr(self.finetuning_args, "use_apollo") and self.finetuning_args.use_apollo:
+                # 当使用Apollo时，我们需要特殊处理
+                from ..trainer_utils import _create_apollo_optimizer
+                self.optimizer = _create_apollo_optimizer(self.model, self.args, self.finetuning_args)
+                # 添加beta_scale参数组
+                self.optimizer.add_param_group({"params": [self.model.beta_scale], "weight_decay": 0.0})
+            else:
+                # 标准优化器创建
+                optimizer_cls, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+                
+                # 创建两个参数组：一个用于模型参数，一个用于beta_scale
+                optimizer_grouped_parameters = [
+                    {
+                        "params": [p for n, p in self.model.named_parameters() 
+                                 if p.requires_grad and n != "beta_scale"],
+                    },
+                    {
+                        "params": [self.model.beta_scale],
+                        "weight_decay": 0.0,  # 不对beta_scale应用权重衰减
+                    }
+                ]
+                
+                # 创建包含所有参数组的优化器
+                self.optimizer = optimizer_cls(
+                    optimizer_grouped_parameters,
+                    **optim_kwargs,
+                )
+        
         return super().create_optimizer()
 
     @override
@@ -187,12 +252,23 @@ class CustomBetaDPOTrainer(DPOTrainer):
         """
         # 计算动态beta: β(x) = c · log(PPL(x)) · β
         base_beta = self.beta
-        if perplexity is not None and hasattr(self.finetuning_args, "pref_beta_scale") and self.finetuning_args.pref_beta_scale > 0:
+        
+        # 从模型获取beta_scale参数
+        beta_scale_param = self.model.beta_scale
+        
+        if perplexity is not None:
             # 增加数值稳定性
             log_ppl = torch.log(torch.clamp(perplexity, min=1.0))
-            dynamic_beta = self.finetuning_args.pref_beta_scale * log_ppl * base_beta # dynamic_beta.shape = [batch_size]
-        else: # self.finetuning_args.pref_beta_scale = 0 以为beta不变, 和标准 dpo 实现相同
-            dynamic_beta = base_beta * torch.ones_like(policy_chosen_logps) # dynamic_beta.shape = [batch_size]
+            
+            # 使用 torch.clamp 确保 beta_scale_param 为正值
+            beta_scale_value = torch.clamp(beta_scale_param, min=1e-6)
+            
+            # 使用可学习的beta_scale计算动态beta
+            dynamic_beta = beta_scale_value * log_ppl * base_beta # dynamic_beta.shape = [batch_size]
+        else: # 当perplexity为None时
+            # 使用可学习的beta_scale
+            beta_scale_value = torch.clamp(beta_scale_param, min=1e-6)
+            dynamic_beta = base_beta * torch.ones_like(policy_chosen_logps) * beta_scale_value # dynamic_beta.shape = [batch_size]
         
         # 使用动态beta替代固定beta，其余逻辑与原实现相同
         if not self.finetuning_args.use_ref_model:
@@ -359,6 +435,10 @@ class CustomBetaDPOTrainer(DPOTrainer):
         for key, metric in zip(key_list, metric_list):  # add remaining items
             if not key.startswith("dummy_"):
                 logs[key] = metric
+
+        # 记录beta_scale的当前值（从模型中获取）
+        if hasattr(self.model, "beta_scale"):
+            logs[f"{train_eval}_beta_scale"] = torch.clamp(self.model.beta_scale, min=1e-6).item()
 
         return Trainer.log(self, logs, *args, **kwargs)
 
