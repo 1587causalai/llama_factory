@@ -5,7 +5,7 @@
 conda activate llama
 
 # 实验参数数组 - 初始beta_scale值
-BETA_SCALES=(0.5 1.0 2.0)
+BETA_SCALES=(0.01 0.1 0.5 1.0)
 
 # 原始配置文件
 CONFIG_FILE="examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml"

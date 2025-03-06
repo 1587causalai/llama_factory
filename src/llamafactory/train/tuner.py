@@ -30,6 +30,7 @@ from .callbacks import LogCallback, PissaConvertCallback, ReporterCallback
 from .dpo import run_dpo
 from .foodpo import run_foodpo
 from .betadpo import run_betadpo
+from .ledpo import run_ledpo
 from .kto import run_kto
 from .ppo import run_ppo
 from .pt import run_pt

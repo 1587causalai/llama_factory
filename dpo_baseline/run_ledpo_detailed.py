@@ -380,7 +380,9 @@ def run_ledpo_training(trainer, training_args, finetuning_args, dataset_module=N
             logger.info("绘制损失曲线...")
             plot_loss(
                 training_args.output_dir, 
-                keys=["loss", "eval_loss", "beta_scale", "dynamic_beta", "rewards/accuracies"]
+                keys=["loss", "eval_loss", "beta_scale", "dynamic_beta", "rewards/accuracies", "eval_rewards/accuracies", 
+                      "rewards/chosen", "rewards/rejected", "rewards/margins", 
+                      "eval_rewards/chosen", "eval_rewards/rejected", "eval_rewards/margins"]
             )
     
     # 执行评估
@@ -400,6 +402,18 @@ def create_callbacks(model_args, data_args, training_args, finetuning_args, gene
     print_section("创建回调函数")
     
     callbacks = []
+
+    if getattr(model_args, "processor", None):
+        logger.info("添加SaveProcessorCallback")
+        callbacks.append(
+            SaveProcessorCallback(
+                model_args=model_args,
+                data_args=data_args,
+                training_args=training_args,
+                finetuning_args=finetuning_args,
+                generating_args=generating_args,
+            )
+        )       
     
     # 定义一个监控beta_scale变化的回调函数
     class BetaScaleMonitorCallback(TrainerCallback):
@@ -412,10 +426,11 @@ def create_callbacks(model_args, data_args, training_args, finetuning_args, gene
                 logger.info(f"Epoch {state.epoch}，beta_scale值: {beta_scale}，动态beta值: {dynamic_beta}")
     
     # 添加beta_scale监控回调
+    logger.info("添加BetaScaleMonitorCallback")
     callbacks.append(BetaScaleMonitorCallback())
     
     logger.info(f"创建了 {len(callbacks)} 个回调函数")
-    return callbacks
+    return callbacks if callbacks else None
 
 
 def run_ledpo_workflow(config_path: str):
@@ -505,7 +520,7 @@ def main():
         # 解析命令行参数
         if len(sys.argv) < 2:
             logger.warning("未提供配置文件路径，使用默认配置文件路径")
-            config_path = "examples/train_lora/qwen1_5_0_5b_lora_dpo.yaml"
+            config_path = "examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml"
         else:
             config_path = sys.argv[1]
         
@@ -524,3 +539,9 @@ def main():
 
 if __name__ == "__main__":
     main() 
+
+
+# 运行命令示例
+# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml
+# 或使用详细脚本
+# python dpo_baseline/run_ledpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml
