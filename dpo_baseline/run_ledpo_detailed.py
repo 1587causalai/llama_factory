@@ -244,6 +244,10 @@ def setup_trainer(
     logger = logging.getLogger(__name__)
     print_section("设置LEDPO训练器")
     
+    # 更新训练参数
+    logger.info("设置训练参数...")
+    training_args.remove_unused_columns = False  # 对于多模态和成对数据集很重要
+    
     logger.info(f"基础beta值: {finetuning_args.pref_beta}")
     logger.info(f"损失函数类型: {finetuning_args.pref_loss}")
     
