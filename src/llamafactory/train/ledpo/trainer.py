@@ -81,10 +81,15 @@ class LEDPOTrainer(DPOTrainer):
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
         
-        # 初始化可学习的beta_scale参数
-        self.beta_scale = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=True)
+        # 创建可学习的beta_scale参数（作为单独变量先保存）
+        beta_scale_param = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=True)
         
+        # 调用Trainer初始化
         Trainer.__init__(self, model=model, **kwargs)
+        
+        # 将beta_scale设置为模型的属性（在Trainer初始化后）
+        self.model.beta_scale = beta_scale_param
+        
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
             raise AttributeError("Please update `transformers`.")
@@ -113,9 +118,7 @@ class LEDPOTrainer(DPOTrainer):
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
-            # 添加beta_scale参数到优化器
-            params = list(self.model.parameters()) + [self.beta_scale]
-            self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args, params=params)
+            self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
         return super().create_optimizer()
 
     @override
@@ -144,7 +147,7 @@ class LEDPOTrainer(DPOTrainer):
         获取动态beta值
         """
         # 使用可学习的beta_scale调整beta值
-        dynamic_beta = self.beta * self.beta_scale
+        dynamic_beta = self.beta * self.model.beta_scale
         return dynamic_beta
 
     def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
@@ -301,7 +304,7 @@ class LEDPOTrainer(DPOTrainer):
 
         # 计算动态beta值
         dynamic_beta = self.get_dynamic_beta()
-        metrics["beta_scale"] = self.beta_scale.detach()
+        metrics["beta_scale"] = self.model.beta_scale.detach()
         metrics["dynamic_beta"] = dynamic_beta.detach()
 
         if self.loss_type == "ftx" and self.ftx_gamma > 0:

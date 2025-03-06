@@ -264,8 +264,8 @@ def setup_trainer(
     )
     
     # 获取可学习的beta_scale参数初始值
-    if hasattr(trainer, "beta_scale"):
-        logger.info(f"初始beta_scale值: {trainer.beta_scale.item()}")
+    if hasattr(trainer.model, "beta_scale"):
+        logger.info(f"初始beta_scale值: {trainer.model.beta_scale.item()}")
         logger.info(f"初始动态beta值: {trainer.get_dynamic_beta().item()}")
     
     # 打印训练器信息
@@ -299,7 +299,7 @@ def debug_compute_preference_loss(trainer, batch):
     
     # 获取动态beta值
     dynamic_beta = trainer.get_dynamic_beta()
-    logger.info(f"当前beta_scale值: {trainer.beta_scale.item()}")
+    logger.info(f"当前beta_scale值: {trainer.model.beta_scale.item()}")
     logger.info(f"当前动态beta值: {dynamic_beta.item()}")
     
     # 计算损失
@@ -362,8 +362,8 @@ def run_ledpo_training(trainer, training_args, finetuning_args, dataset_module=N
         trainer.save_state()
         
         # 输出最终beta_scale值
-        if hasattr(trainer, "beta_scale"):
-            final_beta_scale = trainer.beta_scale.item()
+        if hasattr(trainer.model, "beta_scale"):
+            final_beta_scale = trainer.model.beta_scale.item()
             final_dynamic_beta = trainer.get_dynamic_beta().item()
             logger.info(f"训练后beta_scale值: {final_beta_scale}")
             logger.info(f"训练后动态beta值: {final_dynamic_beta}")
@@ -406,8 +406,8 @@ def create_callbacks(model_args, data_args, training_args, finetuning_args, gene
         def on_epoch_end(self, args, state, control, **kwargs):
             """在每个epoch结束时记录beta_scale的值"""
             trainer = kwargs.get("trainer", None)
-            if trainer and hasattr(trainer, "beta_scale"):
-                beta_scale = trainer.beta_scale.item()
+            if trainer and hasattr(trainer.model, "beta_scale"):
+                beta_scale = trainer.model.beta_scale.item()
                 dynamic_beta = trainer.get_dynamic_beta().item()
                 logger.info(f"Epoch {state.epoch}，beta_scale值: {beta_scale}，动态beta值: {dynamic_beta}")
     
