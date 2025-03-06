@@ -82,10 +82,11 @@ TRAINING_STAGES = {
     "KTO": "kto",
     "FooDPO": "foodpo",
     "BetaDPO": "betadpo",
+    "LEDPO": "ledpo",
     "Pre-Training": "pt",
 }
 
-STAGES_USE_PAIR_DATA = {"rm", "dpo", "foodpo", "betadpo"}
+STAGES_USE_PAIR_DATA = {"rm", "dpo", "foodpo", "betadpo", "ledpo"}
 
 SUPPORTED_CLASS_FOR_S2ATTN = {"llama"}
 
