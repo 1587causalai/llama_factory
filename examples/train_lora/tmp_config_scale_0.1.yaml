@@ -1,0 +1,52 @@
+### model
+model_name_or_path: /root/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: betadpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+pref_beta_scale: 0.1  # 动态beta缩放因子
+
+### dataset
+dataset: hh_rlhf_en
+template: qwen
+cutoff_len: 1024  # 缩短长度以加快测试
+max_samples: 500  # 减少样本数量以加快测试
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### output
+output_dir: saves/qwen1.5-0.5b/lora/scale0.1
+logging_steps: 5
+save_steps: 50
+plot_loss: true
+overwrite_output_dir: saves/qwen1.5-0.5b/lora/scale0.1
+report_to: [wandb]
+# wandb配置通过环境变量设置：export WANDB_PROJECT="foodpo"
+
+### train
+per_device_train_batch_size: 2  # 增加批量大小，因为是更小的模型
+gradient_accumulation_steps: 2  # 减少梯度累积步骤
+learning_rate: 1.0e-4  # 稍微增加学习率
+num_train_epochs: 3.0  # 减少训练轮次以加快测试
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+## eval
+# eval_dataset: hh_rlhf_en 用 validation set 做评估
+val_size: 0.1
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 10 
+
+# 运行命令
+# 设置wandb项目：export WANDB_PROJECT="betadpo" 
+# llamafactory-cli train examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml 
+# python dpo_baseline/run_betadpo_detailed.py examples/train_lora/qwen1_5_0_5b_lora_betadpo.yaml

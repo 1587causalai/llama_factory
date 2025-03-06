@@ -438,8 +438,8 @@ def run_betadpo_workflow(config_path: str):
         
         # 也可以通过环境变量设置WANDB项目
         if not hasattr(training_args, 'wandb_project') or not training_args.wandb_project:
-            os.environ["WANDB_PROJECT"] = "betadpo"
-            logger.info("通过环境变量设置WANDB项目名称为: betadpo")
+            os.environ["WANDB_PROJECT"] = "betadpo-logppl"
+            logger.info("通过环境变量设置WANDB项目名称为: betadpo-logppl")
         
         # 2. 准备tokenizer和模型
         tokenizer, tokenizer_module, template, model, ref_model = prepare_tokenizer_and_model(
