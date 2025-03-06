@@ -80,6 +80,8 @@ def _training_function(config: Dict[str, Any]) -> None:
         run_foodpo(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "betadpo":
         run_betadpo(model_args, data_args, training_args, finetuning_args, callbacks)
+    elif finetuning_args.stage == "ledpo":
+        run_ledpo(model_args, data_args, training_args, finetuning_args, callbacks)
     else:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
 
