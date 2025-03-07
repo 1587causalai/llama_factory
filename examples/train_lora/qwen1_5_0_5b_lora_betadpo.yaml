@@ -44,7 +44,7 @@ ddp_timeout: 180000000
 val_size: 0.1
 per_device_eval_batch_size: 2
 eval_strategy: steps
-eval_steps: 10 
+eval_steps: 5
 
 # 运行命令
 # 设置wandb项目：export WANDB_PROJECT="betadpo" 

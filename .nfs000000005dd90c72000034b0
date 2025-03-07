@@ -1,0 +1,23 @@
+2025-03-07 21:37:34,273 - INFO - PyTorch version 2.4.0 available.
+[2025-03-07 21:37:49,895] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+2025-03-07 21:38:03,201 - INFO - ==================================================
+2025-03-07 21:38:03,201 - INFO - 开始LEDPO训练调试
+2025-03-07 21:38:03,202 - INFO - ==================================================
+2025-03-07 21:38:03,202 - INFO - 正在处理配置参数...
+2025-03-07 21:38:03,202 - INFO - 正在加载配置文件: examples/train_lora/qwen1_5_0_5b_lora_dpo_test.yaml
+2025-03-07 21:38:03,205 - INFO - 配置文件加载成功
+2025-03-07 21:38:03,205 - ERROR - 调试过程中出错: Please provide `model_name_or_path`.
+Traceback (most recent call last):
+  File "/root/LLaMA-Factory/debug_ledpo.py", line 392, in debug_ledpo_training
+    model_args, data_args, training_args, finetuning_args, generating_args = process_args(config_path)
+  File "/root/LLaMA-Factory/debug_ledpo.py", line 80, in process_args
+    model_args = ModelArguments(**config.get("model_args", {}))
+  File "<string>", line 60, in __init__
+  File "/root/LLaMA-Factory/src/llamafactory/hparams/model_args.py", line 323, in __post_init__
+    raise ValueError("Please provide `model_name_or_path`.")
+ValueError: Please provide `model_name_or_path`.
+2025-03-07 21:38:03,206 - INFO - 进入调试模式...
+Warning: The cache directory for DeepSpeed Triton autotune, /root/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+> /root/LLaMA-Factory/src/llamafactory/hparams/model_args.py(323)__post_init__()
+-> raise ValueError("Please provide `model_name_or_path`.")
+(Pdb) 

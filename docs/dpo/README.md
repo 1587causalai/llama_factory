@@ -4,8 +4,16 @@
 
 ## 主要内容
 
+```bash
+python dpo_baseline/run_ledpo_debug.py examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml
+```
+
+
 ### 1. 调试脚本
-- [`dpo_baseline/run_ledpo_debug.py`](../../dpo_baseline/run_ledpo_debug.py) - 专为断点调试设计的DPO训练脚本，包含清晰的断点注释
+- [`dpo_baseline/run_ledpo_debug.py`](../../dpo_baseline/run_ledpo_debug.py) - 专为断点调试设计的DPO训练脚本，
+
+
+
 
 ### 2. 技术文档
 - [`debug_guide.md`](debug_guide.md) - DPO训练调试指南，详细说明调试脚本的使用方法和关键功能
@@ -19,7 +27,7 @@
 ### 调试脚本使用方法
 ```bash
 # 激活适当的conda环境
-conda activate llamafactory  # 或其他适当的环境
+conda activate llama # 或其他适当的环境
 
 # 运行调试脚本
 python dpo_baseline/run_ledpo_debug.py examples/train_lora/qwen1_5_0_5b_lora_ledpo.yaml

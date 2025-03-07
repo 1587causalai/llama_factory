@@ -50,36 +50,20 @@ class LEDPOTrainer(DPOTrainer):
         disable_dropout: bool = True,
         **kwargs,
     ):
-        """
-        LEDPO训练器初始化
-        
-        LEDPO (Learnable Beta DPO) 是标准DPO的扩展，特点是将beta参数设计为可学习参数。
-        beta参数控制偏好学习的强度，传统DPO中这是一个固定超参数，而LEDPO中它变为可学习参数。
-        
-        参数:
-            model: 策略模型，将被优化
-            ref_model: 参考模型，用于计算KL散度约束
-            finetuning_args: 微调参数
-            processor: 可选的处理器组件
-            disable_dropout: 是否禁用dropout（评估/推理时通常设为True）
-            **kwargs: 额外参数
-        """
         if is_transformers_version_greater_than("4.46"):
             kwargs["processing_class"] = kwargs.pop("tokenizer")
 
-        # 禁用dropout以提高训练稳定性
         if disable_dropout:
             disable_dropout_in_model(model)
             if ref_model is not None:
                 disable_dropout_in_model(ref_model)
 
-        # 初始化各种训练参数和设置
         self.finetuning_args = finetuning_args
-        self.f_divergence_type = "reverse_kl"  # 使用反向KL散度作为正则化
+        self.f_divergence_type = "reverse_kl"
         self.reference_free = False
-        self.use_dpo_data_collator = True  # 避免warning的技巧
-        self.generate_during_eval = False   # 评估时禁用生成
-        self.label_pad_token_id = IGNORE_INDEX  # 标签填充token的ID
+        self.use_dpo_data_collator = True  # hack to avoid warning
+        self.generate_during_eval = False  # disable at evaluation
+        self.label_pad_token_id = IGNORE_INDEX
         self.padding_value = 0
         self.is_encoder_decoder = model.config.is_encoder_decoder
         self.precompute_ref_log_probs = False
@@ -90,37 +74,33 @@ class LEDPOTrainer(DPOTrainer):
         self.ref_model = ref_model
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
 
-        # DPO超参数设置
-        self.beta = finetuning_args.pref_beta  # 基础beta值 - 从配置中获取初始值
-        self.loss_type = finetuning_args.pref_loss  # 损失类型（dpo/orpo/simpo等）
+        # dpo hyperparams
+        self.beta = finetuning_args.pref_beta
+        self.loss_type = finetuning_args.pref_loss
         self.ftx_gamma = finetuning_args.pref_ftx
-        self.label_smoothing = finetuning_args.dpo_label_smoothing  # 标签平滑参数
-        self.simpo_gamma = finetuning_args.simpo_gamma  # SimPO损失的gamma参数
+        self.label_smoothing = finetuning_args.dpo_label_smoothing
+        self.simpo_gamma = finetuning_args.simpo_gamma
         
-        # LEDPO核心: 创建可学习的beta_scale参数
-        # 初始化为1.0，使训练开始时dynamic_beta = beta
-        # requires_grad=True使其参与梯度更新
-        beta_scale_param = torch.nn.Parameter(torch.ones(1, dtype=torch.float), requires_grad=True)
-        
-        # 调用标准Trainer初始化
         Trainer.__init__(self, model=model, **kwargs)
-        
-        # 将beta_scale设置为模型的属性
-        # 必须在Trainer初始化后设置，确保它正确地添加到模型参数中
-        self.model.beta_scale = beta_scale_param
-        
-        self.model_accepts_loss_kwargs = False  # 覆盖trainer的默认行为
+        self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
             raise AttributeError("Please update `transformers`.")
 
-        warnings.simplefilter("ignore")  # 移除ref模型的gc警告
+        warnings.simplefilter("ignore")  # remove gc warnings on ref model
 
-        # 准备参考模型（如果提供）
+        # 为 model 新增一个 valuehead 来计算 beta
+        self.model.value_head = torch.nn.Sequential(
+            torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+            torch.nn.Sigmoid(),
+            torch.nn.Linear(model.config.hidden_size, 1),
+            torch.nn.Softplus()
+        )
+
         if ref_model is not None:
             if self.is_deepspeed_enabled:
                 if not (
                     getattr(ref_model, "is_loaded_in_8bit", False) or getattr(ref_model, "is_loaded_in_4bit", False)
-                ):  # 量化模型已经在正确设备上
+                ):  # quantized models are already set on the correct device
                     self.ref_model = self._prepare_deepspeed(self.ref_model)
             else:
                 self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
@@ -138,7 +118,71 @@ class LEDPOTrainer(DPOTrainer):
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
-            self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
+            # 检查模型是否有value_head属性
+            if not hasattr(self.model, "value_head"):
+                # 如果没有value_head属性，使用原始方法创建优化器
+                self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
+                return super().create_optimizer()
+            
+            # 准备参数组
+            if hasattr(self.finetuning_args, "use_galore") and self.finetuning_args.use_galore:
+                # 当使用GaLore时，我们需要特殊处理
+                from ..trainer_utils import _create_galore_optimizer
+                self.optimizer = _create_galore_optimizer(self.model, self.args, self.finetuning_args)
+                # 添加value_head参数组
+                value_head_params = list(self.model.value_head.parameters())
+                if value_head_params:  # 确保有参数
+                    self.optimizer.add_param_group({
+                        "params": value_head_params, 
+                        "weight_decay": 0.0,
+                        "lr": self.args.learning_rate * 10.0,  # 可选：为value_head使用更高的学习率
+                    })
+            elif hasattr(self.finetuning_args, "use_apollo") and self.finetuning_args.use_apollo:
+                # 当使用Apollo时，我们需要特殊处理
+                from ..trainer_utils import _create_apollo_optimizer
+                self.optimizer = _create_apollo_optimizer(self.model, self.args, self.finetuning_args)
+                # 添加value_head参数组
+                value_head_params = list(self.model.value_head.parameters())
+                if value_head_params:  # 确保有参数
+                    self.optimizer.add_param_group({
+                        "params": value_head_params, 
+                        "weight_decay": 0.0,
+                        "lr": self.args.learning_rate * 10.0,  # 可选：为value_head使用更高的学习率
+                    })
+            else:
+                # 标准优化器创建
+                optimizer_cls, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+                
+                # 获取value_head参数
+                value_head_params = list(self.model.value_head.parameters())
+                
+                # 创建两个参数组：一个用于模型主体参数，一个用于value_head
+                optimizer_grouped_parameters = [
+                    {
+                        "params": [p for n, p in self.model.named_parameters() 
+                                 if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)],
+                    }
+                ]
+                
+                # 如果value_head有参数，添加专门的参数组
+                if value_head_params:
+                    optimizer_grouped_parameters.append({
+                        "params": value_head_params,
+                        "weight_decay": 0.0,  # 不对value_head应用权重衰减
+                        "lr": self.args.learning_rate * 10.0,  # 可选：为value_head使用更高的学习率
+                    })
+                
+                # 创建包含所有参数组的优化器
+                self.optimizer = optimizer_cls(
+                    optimizer_grouped_parameters,
+                    **optim_kwargs,
+                )
+
+            # 打印参数组信息以便调试
+            print("优化器参数组:")
+            for i, group in enumerate(self.optimizer.param_groups):
+                print(f"参数组 {i}: {len(group['params'])} 个参数, 学习率: {group.get('lr', 'default')}")
+        
         return super().create_optimizer()
 
     @override
@@ -162,79 +206,60 @@ class LEDPOTrainer(DPOTrainer):
         """
         return Trainer.get_batch_samples(self, epoch_iterator, num_batches)
 
-    def get_dynamic_beta(self):
-        """
-        获取动态beta值
-        
-        LEDPO的核心创新：通过可学习的beta_scale参数动态调整beta值。
-        随着训练进行，模型会自动学习最优的beta_scale值，从而使得beta更加适应当前训练状态。
-        """
-        # 使用可学习的beta_scale调整基础beta值
-        # beta_scale会在训练过程中通过梯度下降自动更新
-        dynamic_beta = self.beta * self.model.beta_scale
-        return dynamic_beta
-
-    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", dynamic_beta: "torch.Tensor") -> "torch.Tensor":
         r"""
-        计算ORPO(Odds Ratio Policy Optimization)损失函数
-        
-        ORPO损失结合了SFT损失和偏好优化损失，利用log odds ratio来构建。
-        这里使用动态beta来控制偏好学习的强度。
-        
-        参数:
-            chosen_logps: 偏好数据中较好回答的对数概率
-            rejected_logps: 偏好数据中较差回答的对数概率
-            
-        返回:
-            计算得到的ORPO损失
+        Computes ORPO's odds ratio (OR) loss for batched log probabilities of the policy model.
         """
-        # 获取当前的动态beta值
-        dynamic_beta = self.get_dynamic_beta()
-        
-        # 计算log odds ratio
         log_odds = (chosen_logps - rejected_logps) - (
             torch.log1p(-torch.exp(chosen_logps)) - torch.log1p(-torch.exp(rejected_logps))
         )
-        
-        # SFT损失部分（极大化chosen样本概率）
         sft_loss = -chosen_logps
-        
-        # Odds Ratio损失部分
         odds_ratio_loss = -F.logsigmoid(log_odds)
-        
-        # 组合损失，使用动态beta控制偏好学习的强度
         orpo_loss = sft_loss + dynamic_beta * odds_ratio_loss
         return orpo_loss
 
-    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", dynamic_beta: "torch.Tensor") -> "torch.Tensor":
         r"""
-        计算SimPO(Simple Policy Optimization)损失函数
-        
-        SimPO是一种简化的偏好优化方法，使用动态beta来控制偏好学习的强度。
-        
-        参数:
-            chosen_logps: 偏好数据中较好回答的对数概率
-            rejected_logps: 偏好数据中较差回答的对数概率
-            
-        返回:
-            计算得到的SimPO损失
+        Computes SimPO loss for batched log probabilities of the policy model.
         """
-        # 获取当前的动态beta值
-        dynamic_beta = self.get_dynamic_beta()
-        
-        # 计算策略对数比率
         pi_logratios = chosen_logps - rejected_logps
-        
-        # 计算gamma对数比率
         gamma_logratios = self.simpo_gamma / dynamic_beta
-        
-        # 计算最终logits
         logits = pi_logratios - gamma_logratios
-        
-        # 计算SimPO损失，使用动态beta调整学习强度
         simpo_loss = -F.logsigmoid(dynamic_beta * logits)
         return simpo_loss
 
+    def dpo_loss_with_dynamic_beta(
+        self,
+        policy_chosen_logps: "torch.Tensor",
+        policy_rejected_logps: "torch.Tensor",
+        reference_chosen_logps: "torch.Tensor",
+        reference_rejected_logps: "torch.Tensor",
+        dynamic_beta: "torch.Tensor" = None,
+    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        """
+        实现支持动态beta的标准DPO损失
+        """
+        
+        assert dynamic_beta is not None, "dynamic_beta is None"
+        
+        pi_logratios = policy_chosen_logps - policy_rejected_logps  # shape = [batch_size]
+        ref_logratios = reference_chosen_logps - reference_rejected_logps  # shape = [batch_size]
+        
+        logits = dynamic_beta * (pi_logratios - ref_logratios)  # shape = [batch_size]
+        
+        if self.label_smoothing > 0:
+            # 为标签应用平滑处理
+            losses = (
+                -self.label_smoothing * F.logsigmoid(-logits) - (1 - self.label_smoothing) * F.logsigmoid(logits)
+            )
+        else:
+            losses = -F.logsigmoid(logits)
+        
+        chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps).detach() 
+        rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps).detach()
+        
+        return losses, chosen_rewards, rejected_rewards
+    
     def compute_preference_loss(
         self,
         policy_chosen_logps: "torch.Tensor",
@@ -243,121 +268,61 @@ class LEDPOTrainer(DPOTrainer):
         reference_rejected_logps: Optional["torch.Tensor"],
     ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
         r"""
-        计算偏好学习的损失函数
-        
-        根据设置的损失类型和是否使用参考模型，选择不同的损失计算方法。
-        所有方法都使用动态beta来控制偏好学习的强度。
-        
-        参数:
-            policy_chosen_logps: 策略模型对较好回答的对数概率
-            policy_rejected_logps: 策略模型对较差回答的对数概率
-            reference_chosen_logps: 参考模型对较好回答的对数概率
-            reference_rejected_logps: 参考模型对较差回答的对数概率
-            
-        返回:
-            (损失, 较好回答的奖励, 较差回答的奖励)
+        Computes loss for preference learning.
         """
-        # 获取当前的动态beta值
-        dynamic_beta = self.get_dynamic_beta()
-        
-        # 根据是否使用参考模型选择不同的损失计算方法
+
+        # 计算 dynamic beta
+        dynamic_beta = self.beta
+
         if not self.finetuning_args.use_ref_model:
-            # 不使用参考模型时，根据损失类型选择
             if self.loss_type == "orpo":
-                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps)
+                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, dynamic_beta)
             elif self.loss_type == "simpo":
-                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps)
+                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps, dynamic_beta)
             else:
                 raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
 
-            # 计算奖励值（用于记录和可视化）
             chosen_rewards = dynamic_beta * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = dynamic_beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
-            # 使用参考模型时，调用DPO损失计算方法
-            # 注意这也使用动态beta
-            losses, chosen_rewards, rejected_rewards = self.dpo_loss(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps
+            losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
+                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
             )
 
-        return losses, chosen_rewards, rejected_rewards
-
-    def dpo_loss(
-        self,
-        policy_chosen_logps: "torch.Tensor",
-        policy_rejected_logps: "torch.Tensor",
-        reference_chosen_logps: "torch.Tensor",
-        reference_rejected_logps: "torch.Tensor",
-    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
-        """
-        使用可学习beta计算DPO损失
-        
-        标准DPO损失的LEDPO变体，使用动态beta参数控制偏好学习的强度。
-        DPO通过最大化策略模型和参考模型之间的对数比率差来优化策略。
-        
-        参数:
-            policy_chosen_logps: 策略模型对较好回答的对数概率
-            policy_rejected_logps: 策略模型对较差回答的对数概率
-            reference_chosen_logps: 参考模型对较好回答的对数概率
-            reference_rejected_logps: 参考模型对较差回答的对数概率
-            
-        返回:
-            (DPO损失, 较好回答的奖励, 较差回答的奖励)
-        """
-        # 获取当前的动态beta值
-        dynamic_beta = self.get_dynamic_beta()
-        
-        # 计算策略模型的对数比率
-        pi_logratios = policy_chosen_logps - policy_rejected_logps
-        # 计算参考模型的对数比率
-        ref_logratios = reference_chosen_logps - reference_rejected_logps
-        
-        # 计算最终logits（策略和参考模型的对数比率差）
-        logits = pi_logratios - ref_logratios
-        
-        # DPO标准损失函数计算
-        if self.label_smoothing > 0:
-            # 使用标签平滑，alpha确定平滑程度
-            alpha = self.label_smoothing
-            # 平滑后的DPO损失
-            losses = -alpha * F.logsigmoid(dynamic_beta * logits) - (1 - alpha) * F.logsigmoid(-dynamic_beta * logits)
-        else:
-            # 标准DPO损失，使用动态beta调整学习强度
-            losses = -F.logsigmoid(dynamic_beta * logits)
-        
-        # 计算奖励值（用于记录和可视化）
-        chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps).detach()
-        rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps).detach()
-        
         return losses, chosen_rewards, rejected_rewards
 
     @override
     def concatenated_forward(
         self, model: "PreTrainedModel", batch: Dict[str, "torch.Tensor"]
-    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor"]:
-        r"""
-        Computes the sum log probabilities of the labels under given logits if loss_type is not IPO, ORPO or SimPO.
-
-        Otherwise the average log probabilities.
-        """
+    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        """扩展方法，额外返回计算的困惑度"""
         if self.finetuning_args.use_ref_model:
-            batch = nested_detach(batch, clone=True)  # avoid error
+            batch = nested_detach(batch, clone=True)  # 避免错误
 
-        all_logits: "torch.Tensor" = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
-        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
+        outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=True) # outputs.keys() = ['logits', 'hidden_states']
+        
+        all_logits: "torch.Tensor" = outputs.logits.to(torch.float32) # batch.keys() = ['input_ids', 'attention_mask', 'labels']
+        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"]) # all_logps.shape = [batch_size * 2, seq_len], valid_length.shape = [batch_size * 2]
+        
+        # 计算prompt的困惑度 - 使用现有的计算，避免额外前向传播
+        prompt_perplexity, last_prompt_token_hidden_states = self.calculate_prompt_perplexity_and_last_token_logits(batch, outputs)  # perplexity.shape = [batch_size]
+        
+        # 计算 value_head 的输出用于计算 dynamic beta
+        self.beta = model.value_head(last_prompt_token_hidden_states).squeeze(-1) # input.shape = [batch_size, hidden_size], output.shape = [batch_size]
+
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             all_logps = all_logps / valid_length
 
-        batch_size = batch["input_ids"].size(0) // 2
+        batch_size = batch["input_ids"].size(0) // 2  # batch_size 是 input_ids.shape[0] 的一半, 因为input_ids是chosen和rejected的拼接, batch_size 是 prompt的batch_size. 
         chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
         chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
         chosen_length, _ = valid_length.split(batch_size, dim=0)
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps, prompt_perplexity, self.beta
         else:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length
-
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length, prompt_perplexity, self.beta
+        
     @override
     def compute_reference_log_probs(
         self, model: "PreTrainedModel", batch: Dict[str, "torch.Tensor"]
@@ -396,103 +361,140 @@ class LEDPOTrainer(DPOTrainer):
             policy_rejected_logps,
             policy_chosen_logits,
             policy_rejected_logits,
-            policy_chosen_avg_logps,
+            policy_chosen_logps_avg,
+            prompt_perplexity,
+            dynamic_beta
         ) = self.concatenated_forward(model, batch)
 
-        # 计算动态beta值
-        dynamic_beta = self.get_dynamic_beta()
-        metrics["beta_scale"] = self.model.beta_scale.detach()
-        metrics["dynamic_beta"] = dynamic_beta.detach()
-
-        if self.loss_type == "ftx" and self.ftx_gamma > 0:
-            sft_loss = self.ftx_gamma * -policy_chosen_logps.mean()
-            metrics["sft_loss"] = sft_loss.detach()
-
-        if (train_eval == "train" and self._precomputed_train_ref_log_probs) or (
-            train_eval == "eval" and self._precomputed_eval_ref_log_probs
-        ):
-            batch_size = policy_chosen_logps.shape[0]
-            if train_eval == "train":
-                if self.precomputed_train_reference_log_probs["chosen"].shape[0] < batch_size:
-                    batch_size = self.precomputed_train_reference_log_probs["chosen"].shape[0]
-            else:
-                if self.precomputed_eval_reference_log_probs["chosen"].shape[0] < batch_size:
-                    batch_size = self.precomputed_eval_reference_log_probs["chosen"].shape[0]
-
-            if train_eval == "train":
-                reference_chosen_logps = self.precomputed_train_reference_log_probs["chosen"][:batch_size].to(
-                    self.accelerator.device
-                )
-                reference_rejected_logps = self.precomputed_train_reference_log_probs["rejected"][:batch_size].to(
-                    self.accelerator.device
-                )
-            else:
-                reference_chosen_logps = self.precomputed_eval_reference_log_probs["chosen"][:batch_size].to(
-                    self.accelerator.device
-                )
-                reference_rejected_logps = self.precomputed_eval_reference_log_probs["rejected"][:batch_size].to(
-                    self.accelerator.device
-                )
-
-            policy_chosen_logps = policy_chosen_logps[:batch_size]
-            policy_rejected_logps = policy_rejected_logps[:batch_size]
-            policy_chosen_logits = policy_chosen_logits[:batch_size]
-            policy_rejected_logits = policy_rejected_logits[:batch_size]
-            policy_chosen_avg_logps = policy_chosen_avg_logps[:batch_size]
-        else:
-            reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
-
+        reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
         losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
-            policy_chosen_logps=policy_chosen_logps,
-            policy_rejected_logps=policy_rejected_logps,
-            reference_chosen_logps=reference_chosen_logps,
-            reference_rejected_logps=reference_rejected_logps,
+            policy_chosen_logps,
+            policy_rejected_logps,
+            reference_chosen_logps,
+            reference_rejected_logps,
         )
+        sft_loss = -policy_chosen_logps_avg
+        if self.ftx_gamma > 1e-6:
+            losses += self.ftx_gamma * sft_loss
 
-        if self.loss_type == "ftx" and self.ftx_gamma > 0:
-            loss = losses.mean() + sft_loss
-        else:
-            loss = losses.mean()
+        prefix = "eval_" if train_eval == "eval" else ""
+        metrics[f"{prefix}rewards/chosen"] = chosen_rewards.mean().item()
+        metrics[f"{prefix}rewards/rejected"] = rejected_rewards.mean().item()
+        metrics[f"{prefix}rewards/accuracies"] = (chosen_rewards > rejected_rewards).float().mean().item()
+        metrics[f"{prefix}rewards/margins"] = (chosen_rewards - rejected_rewards).mean().item()
+        metrics[f"{prefix}logps/chosen"] = policy_chosen_logps.mean().item()
+        metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
+        metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
+        metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
+        metrics[f"{prefix}beta"] = dynamic_beta.mean().item()
+        metrics[f"{prefix}perplexity"] = prompt_perplexity.mean().item()
+        if self.loss_type == "orpo":
+            metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
+            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
 
-        metrics["chosen_rewards"] = chosen_rewards.detach().mean()
-        metrics["rejected_rewards"] = rejected_rewards.detach().mean()
-        metrics["margins"] = (chosen_rewards - rejected_rewards).detach().mean()
-        metrics["accuracies"] = (chosen_rewards > rejected_rewards).detach().float().mean()
-        # metrics["policy_rejected_logps"] = policy_rejected_logps.detach().mean()
-        # metrics["policy_chosen_logps"] = policy_chosen_logps.detach().mean()
-        # metrics["policy_chosen_avg_logps"] = policy_chosen_avg_logps.detach().mean()
-
-        return loss, metrics
+        return losses.mean(), metrics
 
     @override
     def compute_loss(
         self, model: "PreTrainedModel", inputs: Dict[str, "torch.Tensor"], return_outputs: bool = False, **kwargs
     ) -> Union["torch.Tensor", Tuple["torch.Tensor", List["torch.Tensor"]]]:
         r"""
-        Overrides the compute_loss method of the trainer to compute the DPO loss.
+        Subclass and override to accept extra kwargs.
         """
-        loss, metrics = self.get_batch_loss_metrics(model, inputs, train_eval="train")
-        if not is_transformers_version_greater_than("4.41.0"):
-            self.log(metrics)
-        else:
-            # metrics will be logged in log method
-            self._stored_metrics["train"].update(metrics)
-        return loss
+        return super().compute_loss(model, inputs, return_outputs)
 
     @override
     def log(self, logs: Dict[str, float], *args, **kwargs) -> None:
         r"""
-        Overrides the log method of the trainer to capture the loss metrics.
+        Log `logs` on the various objects watching training, including stored metrics.
         """
-        if not is_transformers_version_greater_than("4.41.0"):
-            super().log(logs, *args, **kwargs)
-            return
+        # logs either has "loss" or "eval_loss"
+        train_eval = "train" if "loss" in logs else "eval"
+        # Add averaged stored metrics to logs
+        key_list, metric_list = [], []
+        for key, metrics in self._stored_metrics[train_eval].items():
+            key_list.append(key)
+            metric_list.append(torch.tensor(metrics, dtype=torch.float).to(self.accelerator.device).mean().item())
 
-        if "epoch" in logs and hasattr(self, "_stored_metrics"):
-            prefix = "train"
-            stored_metrics = self._stored_metrics.pop(prefix, {})
-            if len(stored_metrics) > 0:
-                for metric_name, metrics_values in stored_metrics.items():
-                    if len(metrics_values) > 0:
-                        logs[f"{prefix}_{metric_name}"] = torch.tensor(metrics_values).mean().item()
-        super().log(logs, *args, **kwargs)
+        del self._stored_metrics[train_eval]
+        if len(metric_list) < 10:  # pad to for all reduce
+            for i in range(10 - len(metric_list)):
+                key_list.append(f"dummy_{i}")
+                metric_list.append(0.0)
+
+        metric_list = torch.tensor(metric_list, dtype=torch.float).to(self.accelerator.device)
+        metric_list = self.accelerator.reduce(metric_list, "mean").tolist()
+        for key, metric in zip(key_list, metric_list):  # add remaining items
+            if not key.startswith("dummy_"):
+                logs[key] = metric
+
+        return Trainer.log(self, logs, *args, **kwargs)
+
+
+    def calculate_prompt_perplexity_and_last_token_logits(self, batch, outputs):
+        """
+        使用已有的信息计算prompt的困惑度， last prompt token transformer 的输出用于计算 dynamic beta for each sample.
+        """
+        # 获取提示部分的mask
+        labels = batch["labels"]
+        input_ids = batch["input_ids"]
+        prompt_mask = (labels == IGNORE_INDEX)
+        
+        batch_size = input_ids.size(0) // 2
+        chosen_input_ids = input_ids[:batch_size]  # 只需计算chosen样本的prompt困惑度
+        chosen_prompt_mask = prompt_mask[:batch_size]
+        
+        # 排除padding位置
+        valid_tokens_mask = (chosen_input_ids != self.padding_value) & chosen_prompt_mask
+        
+        # 已经有logits的情况下直接使用
+        assert outputs.logits is not None, "all_logits is None"
+
+        all_logits = outputs.logits[:batch_size]
+        chosen_logits = all_logits[:batch_size]
+        
+        # 只需要prompt部分的logits和对应的input_ids，用于计算下一个token的预测
+        # 将token shift：logits预测下一个token
+        shifted_logits = chosen_logits[:, :-1, :]  # [batch, seq_len-1, vocab_size]
+        shifted_ids = chosen_input_ids[:, 1:]  # [batch, seq_len-1]
+        shifted_mask = valid_tokens_mask[:, 1:]  # [batch, seq_len-1]
+        
+        # 只保留prompt部分和下一个token是prompt的预测
+        # 注意：最后一个prompt token预测的是第一个回答token，应排除
+        prompt_next_token_mask = shifted_mask & (labels[:batch_size, 1:] == IGNORE_INDEX)
+        
+        # 计算log softmax
+        log_probs = F.log_softmax(shifted_logits, dim=-1)
+        
+        # 创建安全gather的索引
+        gather_ids = shifted_ids.clone()
+        valid_gather_mask = (shifted_ids != 0) & prompt_next_token_mask
+        gather_ids[~valid_gather_mask] = 1  # 使用一个有效索引
+        
+        # 获取每个位置对应token的log概率
+        token_log_probs = torch.gather(log_probs, -1, gather_ids.unsqueeze(-1)).squeeze(-1)
+        
+        # 只保留valid位置的log概率
+        token_log_probs = token_log_probs * valid_gather_mask.float()
+        
+        # 计算每个序列有效token数
+        seq_lengths = valid_gather_mask.sum(dim=-1).float()
+        seq_lengths = torch.max(seq_lengths, torch.ones_like(seq_lengths))  # 避免除零
+        
+        # 计算平均log概率和困惑度
+        avg_log_probs = token_log_probs.sum(dim=-1) / seq_lengths
+        perplexity = torch.exp(-avg_log_probs)
+        
+        # 使用 seq_lengths 计算 last prompt token transformer 的输出 with shape [batch, hidden_size]
+        # 将 seq_lengths 转换为整数类型用于索引，并确保在有效范围内
+        last_hidden_states = outputs.hidden_states[-1] # shape = [batch, seq_len, hidden_size]
+        seq_length_indices = (seq_lengths - 1).long().clamp(0, chosen_logits.size(1) - 1)
+        
+        # 创建批次索引 [0, 1, 2, ..., batch_size-1]
+        batch_indices = torch.arange(batch_size, device=chosen_logits.device)
+        
+        # 使用高级索引直接获取每个样本最后提示词的logits，完全向量化操作
+        last_prompt_token_hidden_states = last_hidden_states[batch_indices, seq_length_indices]
+        
+        return perplexity, last_prompt_token_hidden_states
+        
