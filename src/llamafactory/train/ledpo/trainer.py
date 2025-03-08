@@ -285,9 +285,20 @@ class LEDPOTrainer(DPOTrainer):
             chosen_rewards = dynamic_beta * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = dynamic_beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
-            losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
-            )
+            if self.loss_type == "sigmoid": # 添加对sigmoid损失函数的支持
+                losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
+                    policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
+                )
+            elif self.loss_type == "orpo":
+                losses = self.odds_ratio_loss(policy_chosen_logps - reference_chosen_logps, policy_rejected_logps - reference_rejected_logps, dynamic_beta)
+                chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps).to(self.accelerator.device).detach()
+                rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps).to(self.accelerator.device).detach()
+            elif self.loss_type == "simpo":
+                losses = self.simpo_loss(policy_chosen_logps - reference_chosen_logps, policy_rejected_logps - reference_rejected_logps, dynamic_beta)
+                chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps).to(self.accelerator.device).detach()
+                rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps).to(self.accelerator.device).detach()
+            else:
+                raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
 
         return losses, chosen_rewards, rejected_rewards
 
