@@ -409,6 +409,10 @@ class FinetuningArguments(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
     )
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": "The project name for wandb logging."},
+    )
     use_llama_pro: bool = field(
         default=False,
         metadata={"help": "Whether or not to make only the parameters in the expanded blocks trainable."},

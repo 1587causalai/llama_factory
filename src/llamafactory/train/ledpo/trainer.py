@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import warnings
+import os
 from collections import defaultdict
 from contextlib import nullcontext
 from types import MethodType
@@ -147,7 +148,7 @@ class LEDPOTrainer(DPOTrainer):
                     self.optimizer.add_param_group({
                         "params": value_head_params, 
                         "weight_decay": 0.0,
-                        "lr": self.args.learning_rate * 10.0,  # 可选：为value_head使用更高的学习率
+                        "lr": self.args.learning_rate * 2.0,  # 可选：为value_head使用更高的学习率
                     })
             else:
                 # 标准优化器创建

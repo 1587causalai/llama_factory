@@ -26,6 +26,7 @@ save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 report_to: [wandb]
+wandb_project: neural_ledpo
 # wandb配置通过环境变量设置：export WANDB_PROJECT="ledpo"
 
 ### train
