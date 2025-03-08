@@ -452,7 +452,10 @@ def run_dpo_workflow(config_path: str):
         console.print("[bold green]启动DPO训练工作流程[/bold green]")
         
         # 阶段1: 加载配置
-        console.print("\n[bold cyan]阶段1: 加载配置[/bold cyan]")
+        console.print(Panel("[1/5 配置加载] ⟳ → [2/5 模型准备] ⟳ → [3/5 数据准备] ⟳ → [4/5 训练器设置] ⟳ → [5/5 执行训练]", 
+                           title="[bold yellow]训练进度[/bold yellow]", 
+                           border_style="yellow",
+                           padding=(1, 2)))
         model_args, data_args, training_args, finetuning_args, generating_args = load_and_process_config(config_path)
         
         # 检查是否为DPO/LEDPO训练
@@ -585,8 +588,6 @@ if __name__ == "__main__":
 # 相关conda环境和模型:
 # conda activate llama
 # 本地模型路径: $home/models/Qwen1.5-0.5B 
-
-
 
 
 # 调试指南:
