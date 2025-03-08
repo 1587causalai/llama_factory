@@ -29,11 +29,6 @@ from typing import List, Optional, Dict, Any, Tuple
 # 导入Rich库核心组件（仅用于基础美化）
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.panel import Panel
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
-from rich.layout import Layout
-from rich.syntax import Syntax
 
 # 导入LLaMA-Factory的关键组件
 from llamafactory.hparams import (
@@ -65,7 +60,7 @@ logger = get_logger(__name__)
 
 def setup_logging(level=logging.INFO, output_dir=None):
     """设置日志配置"""
-    handlers = [RichHandler(console=console, rich_tracebacks=True, markup=True, show_path=False)]
+    handlers = [RichHandler(console=console, rich_tracebacks=True)]
     
     if output_dir is not None:
         log_file = os.path.join(output_dir, "training.log")
@@ -81,34 +76,28 @@ def setup_logging(level=logging.INFO, output_dir=None):
     
     return logging.getLogger("ledpo_debug")
 
-def create_rich_table(title, columns, rows):
-    """创建美观的Rich表格"""
-    table = Table(title=title, show_header=True, header_style="bold magenta")
-    for column in columns:
-        table.add_column(column)
-    for row in rows:
-        table.add_row(*row)
-    return table
-
-def create_rich_panel(content, title=None, style="green"):
-    """创建美观的Rich面板"""
-    return Panel(content, title=title, border_style=style)
-
 #######################
 # 阶段1: 配置加载和处理 #
 #######################
 
 def load_and_process_config(config_path: str) -> Tuple[ModelArguments, DataArguments, TrainingArguments, FinetuningArguments, GeneratingArguments]:
-    """加载并处理配置文件"""
-    # 读取YAML配置文件
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    """
+    加载配置文件并处理参数
     
-    # BREAKPOINT: 配置加载 - 检查原始配置
+    Args:
+        config_path: 配置文件路径
+        
+    Returns:
+        处理后的参数对象元组
+    """
+    console.print(f"[bold cyan]阶段1: 加载配置文件[/bold cyan] {config_path}")
+    
+    # BREAKPOINT: 配置加载前 - 检查配置文件路径
     # pdb.set_trace()
     
-    # 显示加载的配置
-    console.print(create_rich_panel(f"从文件加载配置: {config_path}", title="配置加载", style="cyan"))
+    # 读取配置文件
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
     
     # 处理命令行参数
     original_argv = sys.argv.copy()
@@ -124,37 +113,15 @@ def load_and_process_config(config_path: str) -> Tuple[ModelArguments, DataArgum
     # 设置remove_unused_columns=False
     training_args.remove_unused_columns = False
     
-    # 使用Rich表格显示配置信息
-    config_tables = []
+    # 打印关键配置
+    console.print(f"[green]模型:[/green] {model_args.model_name_or_path}")
+    console.print(f"[green]数据集:[/green] {data_args.dataset}")
+    console.print(f"[green]训练阶段:[/green] {finetuning_args.stage}")
+    console.print(f"[green]微调类型:[/green] {finetuning_args.finetuning_type}")
+    console.print(f"[green]输出目录:[/green] {training_args.output_dir}")
     
-    # 模型配置表
-    model_rows = []
-    for k, v in vars(model_args).items():
-        model_rows.append([k, str(v)])
-    config_tables.append(create_rich_table("模型配置", ["参数", "值"], model_rows))
-    
-    # 数据配置表
-    data_rows = []
-    for k, v in vars(data_args).items():
-        data_rows.append([k, str(v)])
-    config_tables.append(create_rich_table("数据配置", ["参数", "值"], data_rows))
-    
-    # 训练配置表
-    train_rows = []
-    for k, v in vars(training_args).items():
-        if k not in ["_n_gpu", "local_rank", "xpu_backend"]:  # 跳过不重要的参数
-            train_rows.append([k, str(v)])
-    config_tables.append(create_rich_table("训练配置", ["参数", "值"], train_rows))
-    
-    # 微调配置表
-    finetune_rows = []
-    for k, v in vars(finetuning_args).items():
-        finetune_rows.append([k, str(v)])
-    config_tables.append(create_rich_table("微调配置", ["参数", "值"], finetune_rows))
-    
-    # 显示配置表格
-    console.print(Panel(config_tables[0], title="模型配置详情", border_style="blue"))
-    console.print(Panel(config_tables[3], title="微调配置详情", border_style="blue"))
+    # BREAKPOINT: 配置加载后 - 检查解析后的参数对象
+    # pdb.set_trace()
     
     return model_args, data_args, training_args, finetuning_args, generating_args
 
@@ -163,21 +130,45 @@ def load_and_process_config(config_path: str) -> Tuple[ModelArguments, DataArgum
 #########################
 
 def prepare_model_components(model_args, finetuning_args, data_args, training_args, do_train=True):
-    """准备模型、分词器和模板"""
+    """
+    准备tokenizer、模板和模型
+    
+    Args:
+        model_args: 模型参数
+        finetuning_args: 微调参数
+        data_args: 数据参数
+        training_args: 训练参数
+        do_train: 是否进行训练
+        
+    Returns:
+        tokenizer、template、model及相关模块
+    """
     console.print(f"\n[bold cyan]阶段2: 准备模型组件[/bold cyan]")
+    
+    # BREAKPOINT: 加载tokenizer前
+    # pdb.set_trace()
     
     # 1. 加载tokenizer
     console.print("[green]加载Tokenizer...[/green]")
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     
+    # BREAKPOINT: 检查tokenizer - 查看词表大小和特殊token
+    # pdb.set_trace()
+    
     # 2. 获取模板
     console.print("[green]获取模板...[/green]")
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
     
+    # BREAKPOINT: 检查模板 - 检查模板格式和结构
+    # pdb.set_trace()
+    
     # 3. 加载模型
     console.print(f"[green]加载模型: {model_args.model_name_or_path}...[/green]")
     model = load_model(tokenizer, model_args, finetuning_args, do_train)
+    
+    # BREAKPOINT: 检查模型 - 查看模型结构和参数
+    # pdb.set_trace()
     
     # 4. 创建参考模型
     console.print("[green]准备参考模型...[/green]")
@@ -190,6 +181,9 @@ def prepare_model_components(model_args, finetuning_args, data_args, training_ar
     else:
         console.print("[yellow]未使用参考模型[/yellow]")
         ref_model = None
+    
+    # BREAKPOINT: 检查参考模型 - 确认参考模型加载正确
+    # pdb.set_trace()
     
     # 打印模型信息摘要
     console.print(f"[green]Tokenizer类型:[/green] {tokenizer.__class__.__name__}")
@@ -452,7 +446,6 @@ def run_dpo_workflow(config_path: str):
         console.print("[bold green]启动DPO训练工作流程[/bold green]")
         
         # 阶段1: 加载配置
-        console.print("\n[bold cyan]阶段1: 加载配置[/bold cyan]")
         model_args, data_args, training_args, finetuning_args, generating_args = load_and_process_config(config_path)
         
         # 检查是否为DPO/LEDPO训练
@@ -466,60 +459,27 @@ def run_dpo_workflow(config_path: str):
         logger = setup_logging(output_dir=training_args.output_dir)
         logger.info(f"输出目录: {training_args.output_dir}")
         
-        # 显示训练进度
-        console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ⟳ → [3/5 数据准备] → [4/5 训练器设置] → [5/5 执行训练]", 
-                           title="[bold yellow]训练进度[/bold yellow]", 
-                           border_style="yellow",
-                           padding=(1, 2)))
-        
         # 阶段2: 准备模型组件
         tokenizer, template, model, ref_model, tokenizer_module = prepare_model_components(
             model_args, finetuning_args, data_args, training_args, training_args.do_train
         )
         
-        # 更新训练进度
-        console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ✓ → [3/5 数据准备] ⟳ → [4/5 训练器设置] → [5/5 执行训练]", 
-                           title="[bold yellow]训练进度[/bold yellow]", 
-                           border_style="yellow",
-                           padding=(1, 2)))
-        
         # 阶段3: 准备数据集
-        console.print("\n[bold cyan]阶段3: 准备数据集[/bold cyan]")
         dataset_module, data_collator = prepare_training_data(
             template, model_args, data_args, training_args, tokenizer_module
         )
         
-        # 更新训练进度
-        console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ✓ → [3/5 数据准备] ✓ → [4/5 训练器设置] ⟳ → [5/5 执行训练]", 
-                           title="[bold yellow]训练进度[/bold yellow]", 
-                           border_style="yellow",
-                           padding=(1, 2)))
-        
-        # 阶段4: 设置训练器
-        console.print("\n[bold cyan]阶段4: 设置训练器[/bold cyan]")
+        # 阶段4: 设置训练器（修复：传递所有必要的参数）
         trainer = setup_dpo_trainer(
             model, ref_model, training_args, finetuning_args, 
             data_collator, dataset_module, tokenizer_module,
-            model_args=model_args,
-            data_args=data_args,
-            generating_args=generating_args
+            model_args=model_args,  # 传递model_args
+            data_args=data_args,    # 传递data_args
+            generating_args=generating_args  # 传递generating_args
         )
         
-        # 更新训练进度
-        console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ✓ → [3/5 数据准备] ✓ → [4/5 训练器设置] ✓ → [5/5 执行训练] ⟳", 
-                           title="[bold yellow]训练进度[/bold yellow]", 
-                           border_style="yellow",
-                           padding=(1, 2)))
-        
         # 阶段5: 执行训练
-        console.print("\n[bold cyan]阶段5: 执行训练[/bold cyan]")
         run_training(trainer, training_args, finetuning_args, dataset_module)
-        
-        # 更新训练进度
-        console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ✓ → [3/5 数据准备] ✓ → [4/5 训练器设置] ✓ → [5/5 执行训练] ✓", 
-                           title="[bold yellow]训练进度[/bold yellow]", 
-                           border_style="yellow",
-                           padding=(1, 2)))
         
         # BREAKPOINT: 工作流结束 - 整体流程完成后检查
         # pdb.set_trace()
@@ -538,12 +498,7 @@ def main():
     # 设置日志
     logger = setup_logging()
     
-    console.print(Panel.fit(
-        "[bold green]LLaMA-Factory DPO训练调试工具[/bold green]\n"
-        "[cyan]专为断点调试设计，提供清晰的模块化结构与关键断点[/cyan]",
-        title="🔍 调试工具",
-        border_style="green"
-    ))
+    console.print("[bold green]LLaMA-Factory DPO训练调试工具[/bold green]")
     
     # 从命令行获取配置文件路径
     if len(sys.argv) > 1:
@@ -554,22 +509,8 @@ def main():
     
     # 检查配置文件是否存在
     if not os.path.exists(config_path):
-        console.print(Panel(
-            f"[bold red]配置文件不存在: {config_path}[/bold red]\n"
-            "请提供有效的配置文件路径作为命令行参数",
-            title="❌ 错误",
-            border_style="red"
-        ))
+        console.print(f"[bold red]错误: 配置文件不存在: {config_path}[/bold red]")
         sys.exit(1)
-    
-    # 显示配置文件语法高亮
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            yaml_content = f.read()
-        yaml_syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
-        console.print(Panel(yaml_syntax, title=f"配置文件: {config_path}", border_style="blue"))
-    except Exception:
-        pass  # 如果无法显示语法高亮，则忽略
     
     # 执行DPO训练
     run_dpo_workflow(config_path)
