@@ -136,6 +136,10 @@ class RLHFArguments:
         default=0.1,
         metadata={"help": "The beta parameter in the preference loss."},
     )
+    pref_beta_scale: float = field(
+        default=1.0,
+        metadata={"help": "The scale factor c in dynamic beta calculation: β(x) = c · log(PPL(x)) · β."},
+    )
     pref_ftx: float = field(
         default=0.0,
         metadata={"help": "The supervised fine-tuning loss coefficient in DPO training."},
@@ -469,7 +473,7 @@ class FinetuningArguments(
         if self.stage == "ppo" and self.reward_model_type == "lora" and self.finetuning_type != "lora":
             raise ValueError("`reward_model_type` cannot be lora for Freeze/Full PPO training.")
 
-        if self.stage == "dpo" and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
+        if (self.stage == "dpo" or self.stage == "ledpo") and self.pref_loss != "sigmoid" and self.dpo_label_smoothing > 1e-6:
             raise ValueError("`dpo_label_smoothing` is only valid for sigmoid loss function.")
 
         if self.use_llama_pro and self.finetuning_type == "full":
