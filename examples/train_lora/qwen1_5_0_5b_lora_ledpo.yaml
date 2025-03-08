@@ -8,36 +8,37 @@ do_train: true
 finetuning_type: lora
 lora_rank: 8
 lora_target: all
-pref_beta: 0.1
+pref_beta: 0.73  # baseline 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+use_beta_head: false  # 控制是否使用value_head计算动态beta, default: true
 
 ### dataset
 dataset: hh_rlhf_en
 template: qwen
 cutoff_len: 1024  # 缩短长度以加快测试
-max_samples: 100  # 减少样本数量以加快测试
+max_samples: 2000  # 减少样本数量以加快测试, quick test 100, baseline 500, moderate 1000, full 2000
 overwrite_cache: true
 preprocessing_num_workers: 4
 
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4  # 为模型参数的学习率, baseline 1e1-4
+num_train_epochs: 1.0  # baseline 3.0
+# lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/ledpo_lr1e-5_baseline
+output_dir: saves/qwen1.5-0.5b/lora/ledpo_dpo_baseline_n2000_epoch1.0
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 report_to: [wandb]
-wandb_project: neural_ledpo
+wandb_project: neural_ledpo  # default: neural_dpo
 # wandb配置通过环境变量设置：export WANDB_PROJECT="ledpo"
-
-### train
-per_device_train_batch_size: 2
-gradient_accumulation_steps: 2
-learning_rate: 1.0e-3  # 为模型参数的学习率
-num_train_epochs: 3.0
-# lr_scheduler_type: cosine
-warmup_ratio: 0.1
-bf16: true
-ddp_timeout: 180000000
 
 ## eval
 # eval_dataset: hh_rlhf_en 用 validation set 做评估

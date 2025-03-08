@@ -140,6 +140,10 @@ class RLHFArguments:
         default=1.0,
         metadata={"help": "The scale factor c in dynamic beta calculation: β(x) = c · log(PPL(x)) · β."},
     )
+    use_beta_head: bool = field(
+        default=True,
+        metadata={"help": "Whether to use value_head for dynamic beta calculation in LEDPO training."},
+    )
     pref_ftx: float = field(
         default=0.0,
         metadata={"help": "The supervised fine-tuning loss coefficient in DPO training."},

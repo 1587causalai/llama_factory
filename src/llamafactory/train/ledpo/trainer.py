@@ -81,6 +81,7 @@ class LEDPOTrainer(DPOTrainer):
         self.ftx_gamma = finetuning_args.pref_ftx
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
+        self.use_beta_head = getattr(finetuning_args, "use_beta_head", True)  # 直接从finetuning_args读取
         
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
@@ -89,13 +90,15 @@ class LEDPOTrainer(DPOTrainer):
 
         warnings.simplefilter("ignore")  # remove gc warnings on ref model
 
-        # 为 model 新增一个 valuehead 来计算 beta
-        self.model.value_head = torch.nn.Sequential(
-            torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
-            torch.nn.Sigmoid(),
-            torch.nn.Linear(model.config.hidden_size, 1),
-            torch.nn.Softplus()
-        )
+        # 根据use_beta_head参数决定是否添加value_head
+        if self.use_beta_head:
+            # 为 model 新增一个 valuehead 来计算 beta
+            self.model.value_head = torch.nn.Sequential(
+                torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+                torch.nn.Sigmoid(),
+                torch.nn.Linear(model.config.hidden_size, 1),
+                torch.nn.Softplus()
+            )
 
         if ref_model is not None:
             if self.is_deepspeed_enabled:
@@ -308,8 +311,11 @@ class LEDPOTrainer(DPOTrainer):
         # 计算prompt的困惑度 - 使用现有的计算，避免额外前向传播
         prompt_perplexity, last_prompt_token_hidden_states = self.calculate_prompt_perplexity_and_last_token_logits(batch, outputs)  # perplexity.shape = [batch_size]
         
-        # 计算 value_head 的输出用于计算 dynamic beta
-        self.beta = model.value_head(last_prompt_token_hidden_states).squeeze(-1) # input.shape = [batch_size, hidden_size], output.shape = [batch_size]
+        # 根据use_beta_head参数决定是否使用value_head计算动态beta
+        if self.use_beta_head:
+            # 计算 value_head 的输出用于计算 dynamic beta
+            self.beta = model.value_head(last_prompt_token_hidden_states).squeeze(-1) # input.shape = [batch_size, hidden_size], output.shape = [batch_size]
+        # 如果不使用value_head，则self.beta保持为常量值（初始化时的finetuning_args.pref_beta）
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             all_logps = all_logps / valid_length
@@ -387,7 +393,7 @@ class LEDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
         metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
-        metrics[f"{prefix}beta"] = dynamic_beta.mean().item()
+        metrics[f"{prefix}beta"] = dynamic_beta.mean().item() if self.use_beta_head else self.beta
         metrics[f"{prefix}perplexity"] = prompt_perplexity.mean().item()
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
