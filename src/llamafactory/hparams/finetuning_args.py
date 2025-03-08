@@ -445,6 +445,19 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to compute effective tokens per second."},
     )
+    # BetaDPO特定参数
+    beta_strategy: Literal["constant", "adaptive", "exponential", "cosine"] = field(
+        default="constant",
+        metadata={"help": "自适应beta策略: constant固定值, adaptive基于logp差异, exponential指数增长, cosine余弦调度"},
+    )
+    beta_min: float = field(
+        default=0.1,
+        metadata={"help": "自适应beta的最小值"},
+    )
+    beta_max: float = field(
+        default=10.0,
+        metadata={"help": "自适应beta的最大值"},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
