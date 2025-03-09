@@ -109,12 +109,9 @@ class LEDPOTrainer(DPOTrainer):
             else:
                 raise ValueError(f"Unknown activation function: {self.beta_head_activation_fn}")
                 
-            # 简化后的单层ValueHead网络
             self.model.value_head = torch.nn.Sequential(
-                # 移除第一层网络
-                # torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
-                # torch.nn.Sigmoid(),
-                # 直接使用单层映射
+                torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+                torch.nn.Sigmoid(),
                 torch.nn.Linear(model.config.hidden_size, 1),
                 activation_fn  # 使用选择的激活函数
             )

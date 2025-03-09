@@ -118,6 +118,11 @@ def load_and_process_config(config_path: str) -> Tuple[ModelArguments, DataArgum
     args = read_args()
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
     
+    # 如果存在beta_head_activation_fn参数，添加到finetuning_args
+    if 'beta_head_activation_fn' in config:
+        setattr(finetuning_args, 'beta_head_activation_fn', config['beta_head_activation_fn'])
+        console.print(f"[yellow]设置beta_head_activation_fn=[/yellow] {config['beta_head_activation_fn']}")
+    
     # 恢复原始命令行参数
     sys.argv = original_argv
     
@@ -303,8 +308,8 @@ def setup_dpo_trainer(
     """
     console.print(f"\n[bold cyan]阶段4: 设置训练器[/bold cyan]")
     
-    # BREAKPOINT: 创建回调函数前
-    # pdb.set_trace()
+    # 断点1: 检查finetuning_args中的beta初始值
+    # pdb.set_trace()  # 检查 finetuning_args.pref_beta 的初始值
     
     # 创建回调函数
     callbacks = []
@@ -326,8 +331,8 @@ def setup_dpo_trainer(
         generating_args=generating_args  # 使用传入的generating_args
     ))
     
-    # BREAKPOINT: 初始化训练器前 - 检查回调函数
-    # pdb.set_trace()
+    # 断点2: 检查回调函数，特别是可能会修改beta的回调
+    # pdb.set_trace()  # 检查回调函数中是否有动态调整beta的逻辑
     
     # 初始化DPO训练器
     console.print("[green]初始化DPO训练器...[/green]")
@@ -344,8 +349,8 @@ def setup_dpo_trainer(
     
     console.print(f"[green]训练设备:[/green] {training_args.device}")
     
-    # BREAKPOINT: 初始化训练器后 - 检查训练器配置和优化器
-    # pdb.set_trace()
+    # 断点3: 检查训练器中的beta设置
+    # pdb.set_trace()  # 检查 trainer.beta 的值和来源
     
     # 显示优化器参数
     if hasattr(trainer, "optimizer") and trainer.optimizer:
@@ -374,14 +379,14 @@ def run_training(trainer, training_args, finetuning_args, dataset_module=None):
     if training_args.do_train:
         console.print("[green]开始训练...[/green]")
         
-        # BREAKPOINT: 训练前 - 检查训练参数和模型状态
-        # pdb.set_trace()
+        # 断点4: 训练前检查beta值
+        # pdb.set_trace()  # 检查训练开始前 trainer.beta 的值
         
         # 执行训练
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         
-        # BREAKPOINT: 训练后 - 检查训练结果和指标
-        # pdb.set_trace()
+        # 断点5: 训练后检查beta值
+        # pdb.set_trace()  # 检查训练结束后 trainer.beta 的值
         
         console.print("[green]保存模型...[/green]")
         trainer.save_model()
@@ -469,6 +474,9 @@ def run_dpo_workflow(config_path: str):
         logger = setup_logging(output_dir=training_args.output_dir)
         logger.info(f"输出目录: {training_args.output_dir}")
         
+        # 断点6: 在训练前检查整体配置
+        # pdb.set_trace()  # 检查整体配置，特别是beta相关参数
+        
         # 显示训练进度
         console.print(Panel("[1/5 配置加载] ✓ → [2/5 模型准备] ⟳ → [3/5 数据准备] → [4/5 训练器设置] → [5/5 执行训练]", 
                            title="[bold yellow]训练进度[/bold yellow]", 
@@ -513,6 +521,9 @@ def run_dpo_workflow(config_path: str):
                            title="[bold yellow]训练进度[/bold yellow]", 
                            border_style="yellow",
                            padding=(1, 2)))
+        
+        # 断点7: 每次训练迭代后检查beta值变化
+        # 可以在LEDPOTrainer类的相关方法中添加断点，如get_batch_loss_metrics或compute_loss
         
         # 阶段5: 执行训练
         console.print("\n[bold cyan]阶段5: 执行训练[/bold cyan]")

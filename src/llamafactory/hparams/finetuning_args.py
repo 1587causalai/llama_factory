@@ -138,8 +138,14 @@ class RLHFArguments:
     )
     pref_beta_scale: float = field(
         default=1.0,
-        metadata={"help": "The scale factor c in dynamic beta calculation: β(x) = c · log(PPL(x)) · β."},
+        metadata={"help": "The scale factor c in dynamic beta calculation."},
     )
+
+    beta_head_activation_fn: Literal["sigmoid", "softplus", "relu"] = field(
+        default="sigmoid",
+        metadata={"help": "The activation function for the beta head."},
+    )
+
     use_beta_head: bool = field(
         default=True,
         metadata={"help": "Whether to use value_head for dynamic beta calculation in LEDPO training."},
