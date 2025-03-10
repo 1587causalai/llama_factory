@@ -1,0 +1,46 @@
+model_name_or_path: /root/models/Qwen1.5-0.5B
+tokenizer_name_or_path: /root/models/Qwen1.5-0.5B
+
+dataset: alpaca_zh
+preprocessing_num_workers: 4
+
+output_dir: outputs/qwen1_5_0_5b_valuehead_only
+
+stage: ledpo
+template: vanilla
+
+cutoff_len: 512
+learning_rate: 1e-5
+num_train_epochs: 3
+max_samples: 500
+
+pref_beta: 0.1
+pref_beta_scale: 1.0
+pref_loss: sigmoid
+use_beta_head: true
+value_head_lr_multiplier: 100.0
+freeze_policy: true  # 核心设置：冻结整个policy部分，只训练value_head
+
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+use_wandb: true
+wandb_project: qwen1_5_ledpo_valuehead_only
+wandb_watch: gradients
+wandb_name: qwen1_5_0_5b_valuehead_only
+
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
+gradient_accumulation_steps: 1
+evaluation_strategy: steps
+eval_steps: 50
+save_strategy: steps
+save_steps: 200
+save_total_limit: 2
+logging_steps: 10
+
+tf32: true
+bf16: true
+fp16: false 

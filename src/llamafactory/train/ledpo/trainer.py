@@ -154,32 +154,27 @@ class LEDPOTrainer(DPOTrainer):
             # 获取value_head参数
             value_head_params = list(self.model.value_head.parameters())
             
-            # 检查冻结设置，不允许同时冻结 value_head 和 policy
-            if self.finetuning_args.freeze_value_head and self.finetuning_args.freeze_policy:
-                raise ValueError("不能同时设置 freeze_value_head=True 和 freeze_policy=True")
-            
             # 应用冻结设置
-            if self.finetuning_args.freeze_value_head:
-                print("【冻结设置】冻结 ValueHead，只训练 Policy")
+            if hasattr(self.finetuning_args, "freeze_value_head") and self.finetuning_args.freeze_value_head:
+                # 冻结value_head参数
+                print("【冻结】Value Head已冻结，只训练Policy")
                 for p in value_head_params:
                     p.requires_grad = False
             
-            if self.finetuning_args.freeze_policy:
-                print("【冻结设置】冻结 Policy，只训练 ValueHead")
-                # 获取所有非value_head参数
-                policy_params = [p for n, p in self.model.named_parameters() 
-                              if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)]
-                # 冻结所有非value_head参数
-                for p in policy_params:
-                    p.requires_grad = False
-                    
+            if hasattr(self.finetuning_args, "freeze_policy") and self.finetuning_args.freeze_policy:
+                # 冻结policy参数（即除value_head外的所有参数）
+                print("【冻结】Policy已冻结，只训练Value Head")
+                for n, p in self.model.named_parameters():
+                    if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params):
+                        p.requires_grad = False
+            
             # 准备参数组
             if hasattr(self.finetuning_args, "use_galore") and self.finetuning_args.use_galore:
                 # 当使用GaLore时，我们需要特殊处理
                 from ..trainer_utils import _create_galore_optimizer
                 self.optimizer = _create_galore_optimizer(self.model, self.args, self.finetuning_args)
                 # 添加value_head参数组
-                value_head_params = [p for p in value_head_params if p.requires_grad]  # 只添加需要训练的参数
+                value_head_params = [p for p in value_head_params if p.requires_grad]  # 过滤掉被冻结的参数
                 if value_head_params:  # 确保有参数
                     # 获取value_head学习率倍率，从finetuning_args获取而不是args
                     # 添加监控: 打印实际使用的学习率倍率
@@ -194,7 +189,7 @@ class LEDPOTrainer(DPOTrainer):
                 from ..trainer_utils import _create_apollo_optimizer
                 self.optimizer = _create_apollo_optimizer(self.model, self.args, self.finetuning_args)
                 # 添加value_head参数组
-                value_head_params = [p for p in value_head_params if p.requires_grad]  # 只添加需要训练的参数
+                value_head_params = [p for p in value_head_params if p.requires_grad]  # 过滤掉被冻结的参数
                 if value_head_params:  # 确保有参数
                     # 获取value_head学习率倍率，从finetuning_args获取而不是args
                     # 添加监控: 打印实际使用的学习率倍率
@@ -208,46 +203,52 @@ class LEDPOTrainer(DPOTrainer):
                 # 标准优化器创建
                 optimizer_cls, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
                 
-                # 创建两个参数组：一个用于模型主体参数，一个用于value_head
+                # 创建参数组，只包含需要训练的参数
                 optimizer_grouped_parameters = []
                 
-                # 获取所有非value_head需要训练的参数
-                policy_params = [p for n, p in self.model.named_parameters() 
-                               if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)]
+                # 获取需要训练的policy参数（如果policy没有被冻结）
+                if not (hasattr(self.finetuning_args, "freeze_policy") and self.finetuning_args.freeze_policy):
+                    policy_params = [p for n, p in self.model.named_parameters() 
+                                 if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)]
+                    if policy_params:
+                        optimizer_grouped_parameters.append({
+                            "params": policy_params,
+                        })
                 
-                if policy_params:  # 如果有需要训练的policy参数
-                    optimizer_grouped_parameters.append({
-                        "params": policy_params,
-                    })
-                
-                # 如果value_head有需要训练的参数，添加专门的参数组
-                value_head_params = [p for p in value_head_params if p.requires_grad]
-                if value_head_params:
-                    # 添加监控: 打印实际使用的学习率倍率
-                    print(f"【监控】ValueHead学习率: {self.value_head_lr})")
-                    optimizer_grouped_parameters.append({
-                        "params": value_head_params,
-                        "weight_decay": 0.0,  # 不对value_head应用权重衰减
-                        "lr": self.value_head_lr,  # 使用可配置的学习率倍率
-                    })
+                # 获取需要训练的value_head参数（如果value_head没有被冻结）
+                if not (hasattr(self.finetuning_args, "freeze_value_head") and self.finetuning_args.freeze_value_head):
+                    trainable_value_head_params = [p for p in value_head_params if p.requires_grad]
+                    if trainable_value_head_params:
+                        # 添加监控: 打印实际使用的学习率倍率
+                        print(f"【监控】ValueHead学习率: {self.value_head_lr})")
+                        optimizer_grouped_parameters.append({
+                            "params": trainable_value_head_params,
+                            "weight_decay": 0.0,  # 不对value_head应用权重衰减
+                            "lr": self.value_head_lr,  # 使用可配置的学习率倍率
+                        })
                 
                 # 创建包含所有参数组的优化器
-                self.optimizer = optimizer_cls(
-                    optimizer_grouped_parameters,
-                    **optim_kwargs,
-                )
+                if optimizer_grouped_parameters:  # 确保有需要训练的参数
+                    self.optimizer = optimizer_cls(
+                        optimizer_grouped_parameters,
+                        **optim_kwargs,
+                    )
+                else:
+                    print("【警告】没有可训练的参数！请检查冻结设置。")
+                    # 创建一个空的优化器，避免错误
+                    self.optimizer = optimizer_cls(
+                        [{"params": [p for p in self.model.parameters() if p.requires_grad]}],
+                        **optim_kwargs,
+                    )
 
             # 打印参数组信息以便调试
             print("优化器参数组:")
-            trainable_params_count = 0
+            total_params = 0
             for i, group in enumerate(self.optimizer.param_groups):
-                group_params_count = sum(p.numel() for p in group['params'])
-                trainable_params_count += group_params_count
-                print(f"参数组 {i}: {len(group['params'])} 个参数张量, 共 {group_params_count} 个参数, 学习率: {group.get('lr', 'default')}")
-            
-            # 打印可训练参数总数与比例
-            total_params = sum(p.numel() for p in self.model.parameters())
-            print(f"模型总参数: {total_params}, 可训练参数: {trainable_params_count}, 比例: {trainable_params_count/total_params:.6f}")
+                param_count = len(group['params'])
+                total_params += param_count
+                print(f"参数组 {i}: {param_count} 个参数, 学习率: {group.get('lr', 'default')}")
+            print(f"总计可训练参数数量: {total_params}")
 
         return super().create_optimizer()
 
