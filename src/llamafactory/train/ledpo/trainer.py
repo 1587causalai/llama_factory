@@ -28,7 +28,6 @@ from transformers import Trainer
 from trl import DPOTrainer
 from trl.trainer import disable_dropout_in_model
 from typing_extensions import override
-import pdb
 
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
@@ -85,6 +84,7 @@ class LEDPOTrainer(DPOTrainer):
         self.use_beta_head = getattr(finetuning_args, "use_beta_head", True)  # 决定是否使用value_head动态计算beta
         self.beta_scale = getattr(finetuning_args, "pref_beta_scale", 1.0)  # 获取beta值的缩放因子，默认为1.0
         self.beta_head_activation_fn = getattr(finetuning_args, "beta_head_activation_fn", "sigmoid").lower()
+        self.value_head_lr_multiplier = getattr(finetuning_args, "value_head_lr_multiplier", 100.0)  # 获取value_head的学习率倍率，默认为100.0
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
@@ -112,8 +112,8 @@ class LEDPOTrainer(DPOTrainer):
             # 简化后的单层ValueHead网络
             self.model.value_head = torch.nn.Sequential(
                 # 移除第一层网络
-                # torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
-                # torch.nn.Sigmoid(),
+                torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+                torch.nn.Sigmoid(), # 做完实验后恢复
                 # 直接使用单层映射
                 torch.nn.Linear(model.config.hidden_size, 1),
                 activation_fn  # 使用选择的激活函数
@@ -140,6 +140,10 @@ class LEDPOTrainer(DPOTrainer):
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
+        
+        
+        self.value_head_lr = self.args.learning_rate * self.value_head_lr_multiplier  # 计算value_head的学习率
+
         if self.optimizer is None:
             # 检查模型是否有value_head属性
             if not hasattr(self.model, "value_head"):
@@ -155,10 +159,13 @@ class LEDPOTrainer(DPOTrainer):
                 # 添加value_head参数组
                 value_head_params = list(self.model.value_head.parameters())
                 if value_head_params:  # 确保有参数
+                    # 获取value_head学习率倍率，从finetuning_args获取而不是args
+                    # 添加监控: 打印实际使用的学习率倍率
+                    print(f"【监控】ValueHead学习率: {self.value_head_lr})")
                     self.optimizer.add_param_group({
                         "params": value_head_params, 
                         "weight_decay": 0.0,
-                        "lr": self.args.learning_rate * 10.0,  # 可选：为value_head使用更高的学习率
+                        "lr": self.value_head_lr,  # 使用可配置的学习率倍率
                     })
             elif hasattr(self.finetuning_args, "use_apollo") and self.finetuning_args.use_apollo:
                 # 当使用Apollo时，我们需要特殊处理
@@ -167,10 +174,13 @@ class LEDPOTrainer(DPOTrainer):
                 # 添加value_head参数组
                 value_head_params = list(self.model.value_head.parameters())
                 if value_head_params:  # 确保有参数
+                    # 获取value_head学习率倍率，从finetuning_args获取而不是args
+                    # 添加监控: 打印实际使用的学习率倍率
+                    print(f"【监控】ValueHead学习率: {self.value_head_lr})")
                     self.optimizer.add_param_group({
                         "params": value_head_params, 
                         "weight_decay": 0.0,
-                        "lr": self.args.learning_rate * 2.0,  # 可选：为value_head使用更高的学习率
+                        "lr": self.value_head_lr,  # 使用可配置的学习率倍率
                     })
             else:
                 # 标准优化器创建
@@ -189,10 +199,13 @@ class LEDPOTrainer(DPOTrainer):
                 
                 # 如果value_head有参数，添加专门的参数组
                 if value_head_params:
+                    # 获取value_head学习率倍率，从finetuning_args获取而不是args
+                    # 添加监控: 打印实际使用的学习率倍率
+                    print(f"【监控】ValueHead学习率: {self.value_head_lr})")
                     optimizer_grouped_parameters.append({
                         "params": value_head_params,
                         "weight_decay": 0.0,  # 不对value_head应用权重衰减
-                        "lr": self.args.learning_rate,  # 可选：为value_head使用更高的学习率
+                        "lr": self.value_head_lr,  # 使用可配置的学习率倍率
                     })
                 
                 # 创建包含所有参数组的优化器

@@ -140,10 +140,13 @@ class RLHFArguments:
         default=1.0,
         metadata={"help": "The scale factor c in dynamic beta calculation."},
     )
-
     beta_head_activation_fn: Literal["sigmoid", "softplus", "relu"] = field(
         default="sigmoid",
         metadata={"help": "The activation function for the beta head."},
+    )
+    value_head_lr_multiplier: float = field(
+        default=100.0,
+        metadata={"help": "学习率倍率，用于ValueHead网络训练。默认为基础学习率的100倍。"},
     )
 
     use_beta_head: bool = field(
