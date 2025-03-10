@@ -82,9 +82,18 @@ class LEDPOTrainer(DPOTrainer):
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
         self.use_beta_head = getattr(finetuning_args, "use_beta_head", True)  # 决定是否使用value_head动态计算beta
-        self.beta_scale = getattr(finetuning_args, "pref_beta_scale", 1.0)  # 获取beta值的缩放因子，默认为1.0
+        self.beta_scale = getattr(finetuning_args, "pref_beta_scale", 1.0)
         self.beta_head_activation_fn = getattr(finetuning_args, "beta_head_activation_fn", "sigmoid").lower()
         self.value_head_lr_multiplier = getattr(finetuning_args, "value_head_lr_multiplier", 100.0)  # 获取value_head的学习率倍率，默认为100.0
+        
+        # 获取冻结参数设置
+        self.freeze_policy = getattr(finetuning_args, "freeze_policy", False)  # 是否冻结policy
+        self.freeze_value_head = getattr(finetuning_args, "freeze_value_head", False)  # 是否冻结value_head
+        
+        # 不能同时冻结 policy 和 value_head
+        if self.freeze_policy and self.freeze_value_head:
+            raise ValueError("不能同时冻结 policy 和 value_head，这会导致没有参数可训练")
+        
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
@@ -151,13 +160,31 @@ class LEDPOTrainer(DPOTrainer):
                 self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
                 return super().create_optimizer()
             
+            # 获取value_head参数
+            value_head_params = list(self.model.value_head.parameters())
+            
+            # 获取policy参数（所有不在value_head中的参数）
+            policy_params = [p for n, p in self.model.named_parameters() 
+                          if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)]
+            
+            # 应用冻结设置
+            if self.freeze_policy:
+                print("【参数冻结】冻结策略网络参数，只训练 ValueHead")
+                for p in policy_params:
+                    p.requires_grad = False
+            
+            if self.freeze_value_head:
+                print("【参数冻结】冻结 ValueHead 参数，只训练策略网络")
+                for p in value_head_params:
+                    p.requires_grad = False
+            
             # 准备参数组
             if hasattr(self.finetuning_args, "use_galore") and self.finetuning_args.use_galore:
                 # 当使用GaLore时，我们需要特殊处理
                 from ..trainer_utils import _create_galore_optimizer
                 self.optimizer = _create_galore_optimizer(self.model, self.args, self.finetuning_args)
                 # 添加value_head参数组
-                value_head_params = list(self.model.value_head.parameters())
+                value_head_params = [p for p in value_head_params if p.requires_grad]  # 只包含可训练参数
                 if value_head_params:  # 确保有参数
                     # 获取value_head学习率倍率，从finetuning_args获取而不是args
                     # 添加监控: 打印实际使用的学习率倍率
@@ -172,7 +199,7 @@ class LEDPOTrainer(DPOTrainer):
                 from ..trainer_utils import _create_apollo_optimizer
                 self.optimizer = _create_apollo_optimizer(self.model, self.args, self.finetuning_args)
                 # 添加value_head参数组
-                value_head_params = list(self.model.value_head.parameters())
+                value_head_params = [p for p in value_head_params if p.requires_grad]  # 只包含可训练参数
                 if value_head_params:  # 确保有参数
                     # 获取value_head学习率倍率，从finetuning_args获取而不是args
                     # 添加监控: 打印实际使用的学习率倍率
@@ -186,24 +213,24 @@ class LEDPOTrainer(DPOTrainer):
                 # 标准优化器创建
                 optimizer_cls, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
                 
-                # 获取value_head参数
-                value_head_params = list(self.model.value_head.parameters())
-                
                 # 创建两个参数组：一个用于模型主体参数，一个用于value_head
-                optimizer_grouped_parameters = [
-                    {
-                        "params": [p for n, p in self.model.named_parameters() 
-                                 if p.requires_grad and not any(vp.data_ptr() == p.data_ptr() for vp in value_head_params)],
-                    }
-                ]
+                optimizer_grouped_parameters = []
                 
-                # 如果value_head有参数，添加专门的参数组
-                if value_head_params:
+                # 如果policy参数可训练，添加到参数组
+                policy_trainable_params = [p for p in policy_params if p.requires_grad]
+                if policy_trainable_params:
+                    optimizer_grouped_parameters.append({
+                        "params": policy_trainable_params,
+                    })
+                
+                # 如果value_head有可训练参数，添加专门的参数组
+                value_head_trainable_params = [p for p in value_head_params if p.requires_grad]
+                if value_head_trainable_params:
                     # 获取value_head学习率倍率，从finetuning_args获取而不是args
                     # 添加监控: 打印实际使用的学习率倍率
                     print(f"【监控】ValueHead学习率: {self.value_head_lr})")
                     optimizer_grouped_parameters.append({
-                        "params": value_head_params,
+                        "params": value_head_trainable_params,
                         "weight_decay": 0.0,  # 不对value_head应用权重衰减
                         "lr": self.value_head_lr,  # 使用可配置的学习率倍率
                     })
@@ -216,10 +243,21 @@ class LEDPOTrainer(DPOTrainer):
 
             # 打印参数组信息以便调试
             print("优化器参数组:")
+            total_trainable_params = 0
             for i, group in enumerate(self.optimizer.param_groups):
-                print(f"参数组 {i}: {len(group['params'])} 个参数, 学习率: {group.get('lr', 'default')}")
-                # 336个参数张量：这很可能是所有LoRA适配器的参数张量数量。每个LoRA适配器通常有A和B两个张量，所以这可能意味着模型中有约168个被LoRA微调的线性层。
-                # 4个参数张量：这应该是value_head中的参数张量数量，可能包括两个线性层的权重和偏置（2个线性层 * 2（权重+偏置）= 4个张量）。
+                param_count = sum(p.numel() for p in group['params'])
+                total_trainable_params += param_count
+                print(f"参数组 {i}: {len(group['params'])} 个参数张量, {param_count} 个参数, 学习率: {group.get('lr', 'default')}")
+            
+            print(f"总可训练参数: {total_trainable_params}")
+            # 验证冻结状态
+            if self.freeze_policy:
+                policy_trainable = sum(p.requires_grad for p in policy_params)
+                assert policy_trainable == 0, f"策略网络冻结失败，仍有 {policy_trainable} 个参数可训练"
+            
+            if self.freeze_value_head:
+                value_head_trainable = sum(p.requires_grad for p in value_head_params)
+                assert value_head_trainable == 0, f"ValueHead 冻结失败，仍有 {value_head_trainable} 个参数可训练"
 
         return super().create_optimizer()
 
@@ -497,6 +535,10 @@ class LEDPOTrainer(DPOTrainer):
     def log(self, logs: Dict[str, float], *args, **kwargs) -> None:
         r"""
         Log `logs` on the various objects watching training, including stored metrics.
+
+        Args:
+            logs (`Dict[str, float]`):
+                The values to log.
         """
         # logs either has "loss" or "eval_loss"
         train_eval = "train" if "loss" in logs else "eval"
@@ -517,9 +559,34 @@ class LEDPOTrainer(DPOTrainer):
         for key, metric in zip(key_list, metric_list):  # add remaining items
             if not key.startswith("dummy_"):
                 logs[key] = metric
+        
+        # 如果是训练阶段，添加额外的监控指标
+        if self.state.is_train:
+            # 记录 beta 值
+            if hasattr(self, "beta_head_output") and isinstance(self.beta_head_output, torch.Tensor):
+                beta_mean = self.beta_head_output.mean().item()
+                beta_min = self.beta_head_output.min().item()
+                beta_max = self.beta_head_output.max().item()
+                beta_std = self.beta_head_output.std().item()
+                
+                logs["train/beta_mean"] = beta_mean
+                logs["train/beta_min"] = beta_min
+                logs["train/beta_max"] = beta_max
+                logs["train/beta_std"] = beta_std
+                
+                # 打印详细信息
+                if self.state.global_step % 10 == 0:  # 每10步打印一次
+                    print(f"【监控】ValueHead 输出: 平均={beta_mean:.4f}, 最小={beta_min:.4f}, 最大={beta_max:.4f}, 标准差={beta_std:.4f}")
+                    
+                    # 根据冻结状态打印训练状态
+                    if self.freeze_policy:
+                        print(f"【训练状态】只训练 ValueHead，Policy 网络已冻结")
+                    elif self.freeze_value_head:
+                        print(f"【训练状态】只训练 Policy 网络，ValueHead 已冻结")
+                    else:
+                        print(f"【训练状态】同时训练 Policy 网络和 ValueHead")
 
         return Trainer.log(self, logs, *args, **kwargs)
-
 
     def calculate_prompt_perplexity_and_last_token_logits(self, batch, outputs):
         """
