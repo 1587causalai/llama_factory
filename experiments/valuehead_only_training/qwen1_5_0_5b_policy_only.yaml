@@ -1,0 +1,49 @@
+# 模型配置
+model_name_or_path: /root/models/Qwen1.5-0.5B
+
+# 训练参数
+dataset: dahoas/rm-static:preference:train
+dataset_format: preference
+val_dataset: dahoas/rm-static:preference:test
+val_dataset_format: preference
+output_dir: experiments/valuehead_only_training/outputs_policy_only
+overwrite_output_dir: true
+
+# 训练阶段
+stage: ledpo
+
+# 使用 LoRA 进行训练
+finetuning_type: lora
+lora_target: all
+lora_rank: 8
+
+# ValueHead 设置
+use_beta_head: true               # 使用动态 beta
+beta_head_activation_fn: sigmoid  # ValueHead 激活函数
+value_head_lr_multiplier: 100.0   # ValueHead 学习率倍率
+freeze_value_head: true           # 冻结 ValueHead，只训练 policy
+
+# LEDPO 相关设置
+pref_beta: 0.1                    # 初始 beta 值
+pref_loss: sigmoid                # 使用 sigmoid 损失函数
+
+# 训练超参数
+learning_rate: 5e-5
+num_train_epochs: 3
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 1
+optim: adamw_torch
+logging_steps: 10
+save_steps: 1000
+eval_steps: 200
+warmup_ratio: 0.1
+
+# 其他设置
+torch_dtype: bfloat16
+max_source_length: 512
+max_target_length: 512
+dataloader_num_workers: 2
+
+# 日志设置
+report_to: none 
