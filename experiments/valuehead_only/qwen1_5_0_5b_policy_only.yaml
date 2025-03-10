@@ -36,7 +36,7 @@ bf16: true
 ddp_timeout: 180000000
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/ledpo_policy_only_experiment
+output_dir: /root/LLaMA-Factory/saves/qwen1.5-0.5b/lora/ledpo_policy_only_experiment
 logging_steps: 5
 save_steps: 50
 plot_loss: true
