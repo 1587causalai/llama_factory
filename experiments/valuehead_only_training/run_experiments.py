@@ -53,7 +53,7 @@ def run_experiment(config_path, use_conda="llama", use_deepspeed=True, cuda_devi
     logger.info(f"开始运行实验: {config_path}")
     
     # 准备命令
-    cmd = ["python", "src/train_bash.py", "--config", config_path]
+    cmd = ["python", "src/train.py", "--config", config_path]
     
     # 添加DeepSpeed支持
     if use_deepspeed:
