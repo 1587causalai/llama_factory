@@ -363,7 +363,13 @@ class ReporterCallback(TrainerCallback):
         self.data_args = data_args
         self.finetuning_args = finetuning_args
         self.generating_args = generating_args
-        os.environ["WANDB_PROJECT"] = os.getenv("WANDB_PROJECT", "llamafactory")
+        
+        # 优先使用 finetuning_args 中的 wandb_project 参数
+        wandb_project = "llamafactory"  # 默认项目名
+        if hasattr(finetuning_args, "wandb_project") and finetuning_args.wandb_project:
+            wandb_project = finetuning_args.wandb_project
+            
+        os.environ["WANDB_PROJECT"] = os.getenv("WANDB_PROJECT", wandb_project)
 
     @override
     def on_train_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):

@@ -30,6 +30,7 @@ from ..model import load_model, load_tokenizer
 from .callbacks import LogCallback, PissaConvertCallback, ReporterCallback
 from .dpo import run_dpo
 from .kto import run_kto
+from .ledpo import run_ledpo
 from .ppo import run_ppo
 from .pt import run_pt
 from .rm import run_rm
@@ -74,6 +75,8 @@ def _training_function(config: Dict[str, Any]) -> None:
         run_dpo(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "kto":
         run_kto(model_args, data_args, training_args, finetuning_args, callbacks)
+    elif finetuning_args.stage == "ledpo":
+        run_ledpo(model_args, data_args, training_args, finetuning_args, callbacks)
     else:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
 

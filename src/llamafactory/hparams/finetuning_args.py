@@ -144,6 +144,10 @@ class RLHFArguments:
         default="sigmoid",
         metadata={"help": "The type of DPO loss to use."},
     )
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": "Weights & Biases project name for tracking experiments."},
+    )
     dpo_label_smoothing: float = field(
         default=0.0,
         metadata={"help": "The robust DPO label smoothing parameter in cDPO that should be between 0 and 0.5."},
@@ -401,7 +405,7 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to train model in purely bf16 precision (without AMP)."},
     )
-    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto"] = field(
+    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto", "ledpo"] = field(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
@@ -459,7 +463,10 @@ class FinetuningArguments(
         self.additional_target: Optional[List[str]] = split_arg(self.additional_target)
         self.galore_target: List[str] = split_arg(self.galore_target)
         self.apollo_target: List[str] = split_arg(self.apollo_target)
+        
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+        if self.stage == "ledpo":
+            self.use_ref_model = True
 
         assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."

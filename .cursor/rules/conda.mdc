@@ -1,0 +1,6 @@
+---
+description: 激活相应 conda 环境
+globs: 
+alwaysApply: false
+---
+激活 daily conda 环境
