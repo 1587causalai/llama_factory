@@ -212,6 +212,18 @@ class RLHFArguments:
         default="lora",
         metadata={"help": "The type of the reward model in PPO training. Lora model only supports lora training."},
     )
+    use_dynamic_beta: bool = field(
+        default=False,
+        metadata={"help": "是否使用动态beta值（通过value head网络预测）进行DPO训练。"},
+    )
+    beta_min: float = field(
+        default=0.1,
+        metadata={"help": "动态beta值的最小值界限。"},
+    )
+    beta_max: float = field(
+        default=100.0,
+        metadata={"help": "动态beta值的最大值界限。"},
+    )
 
 
 @dataclass

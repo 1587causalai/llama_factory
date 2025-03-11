@@ -11,7 +11,7 @@ lora_target: all
 pref_beta: 0.73  # baseline 0.1
 
 ### value head
-use_dynamic_beta: true  # 启用动态beta
+use_dynamic_beta: false  # 启用动态beta
 beta_min: 0.01  # 动态beta的最小值
 beta_max: 1000.0  # 动态beta的最大值
 
@@ -34,13 +34,13 @@ bf16: true
 ddp_timeout: 180000000
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/ledpo_baseline
+output_dir: saves/qwen1.5-0.5b/lora/ledpo_test2
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 report_to: [wandb]
-wandb_project: ledpo_test
+wandb_project: ledpo_test2
 
 # 注释：也可以通过环境变量设置：export WANDB_PROJECT="ledpo"
 
