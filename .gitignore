@@ -180,6 +180,9 @@ generated_predictions.jsonl
 
 # 排除所有实验和模型文件
 experiments/
+!experiments/run_ledpo_test.py
+!experiments/README.md
+!experiments/ledpo_test.yaml
 data/
 saves/
 output/
