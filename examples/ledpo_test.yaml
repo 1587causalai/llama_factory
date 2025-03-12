@@ -1,0 +1,55 @@
+### model
+model_name_or_path: /Users/gongqian/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: ledpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.73  # baseline 0.1
+
+### value head
+use_dynamic_beta: true  # 启用动态beta
+beta_min: 0.01  # 动态beta的最小值
+beta_max: 1000.0  # 动态beta的最大值
+
+### dataset
+dataset: hh_rlhf_en
+template: qwen
+cutoff_len: 512  # 缩短长度以加快测试 default 1024
+max_samples: 100  # 减少样本数量以加快测试, quick test 100, baseline 500, moderate 1000, full 2000
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4  # 为模型参数的学习率, baseline 1e1-4
+num_train_epochs: 1.0  # baseline 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### output
+output_dir: saves/qwen1.5-0.5b/lora/ledpo_baseline
+logging_steps: 5
+save_steps: 50
+plot_loss: true
+overwrite_output_dir: true
+report_to: [wandb]
+wandb_project: ledpo_test
+
+# 注释：也可以通过环境变量设置：export WANDB_PROJECT="ledpo"
+
+## eval
+# eval_dataset: hh_rlhf_en 用 validation set 做评估
+val_size: 0.1
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 5 
+
+# 运行命令
+# llamafactory-cli train examples/ledpo_test.yaml 
