@@ -224,6 +224,18 @@ class RLHFArguments:
         default=100.0,
         metadata={"help": "动态beta值的最大值界限。"},
     )
+    use_disco: bool = field(
+        default=False,
+        metadata={"help": "是否使用DISCO损失函数进行DPO训练。"},
+    )
+    disco_variance: float = field(
+        default=1.0,
+        metadata={"help": "DISCO损失函数中使用的方差值，影响标准正态分布CDF计算。"},
+    )
+    freeze_policy_model: bool = field(
+        default=False,
+        metadata={"help": "是否冻结策略梯度更新。"},
+    )
 
 
 @dataclass

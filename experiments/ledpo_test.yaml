@@ -2,7 +2,7 @@
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
 
-ref_model: /root/models/Qwen1.5-0.5B-Chat  # 指定您自己的参考模型路径
+# ref_model: /root/models/Qwen1.5-0.5B-Chat  # 指定您自己的参考模型路径
 
 ### method
 stage: ledpo
@@ -13,15 +13,18 @@ lora_target: all
 pref_beta: 0.73  # baseline 0.1
 
 ### value head
-use_dynamic_beta: true  # 启用动态beta
+use_dynamic_beta: false  # 启用动态beta
 beta_min: 0.1  # 动态beta的最小值
 beta_max: 100.0  # 动态beta的最大值
+use_disco: true  # 启用DISCO (Difference In Squared Cumulative Optimization)损失计算方法，代替标准DPO损失
+disco_variance: 1.0  # DISCO损失函数中使用的方差值，默认1.0
+freeze_policy_model: false  # 冻结策略梯度更新
 
 ### dataset
 dataset: hh_rlhf_en
 template: qwen
 cutoff_len: 1024  # 缩短长度以加快测试 default 1024
-max_samples: 50  # 减少样本数量以加快测试, quick test 100, baseline 500, moderate 1000, full 2000
+max_samples: 500  # 减少样本数量以加快测试, quick test 100, baseline 500, moderate 1000, full 2000
 overwrite_cache: true
 preprocessing_num_workers: 4
 
@@ -29,20 +32,20 @@ preprocessing_num_workers: 4
 per_device_train_batch_size: 2  # default 2
 gradient_accumulation_steps: 2
 learning_rate: 1.0e-4  # 为模型参数的学习率, baseline 1e1-4
-num_train_epochs: 5.0  # baseline 3.0
+num_train_epochs: 1.0  # baseline 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
 
 ### output
-output_dir: saves/qwen1.5-0.5b/lora/ledpo_dynamic_baseline_freeze_policy
+output_dir: saves/qwen/ledpo
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 report_to: [wandb]
-wandb_project: ledpo_test
+wandb_project: ledpo_disco
 
 # 注释：也可以通过环境变量设置：export WANDB_PROJECT="ledpo"
 

@@ -111,10 +111,13 @@ class LEDPOTrainer(DPOTrainer):
         self.beta_min = finetuning_args.beta_min if hasattr(finetuning_args, "beta_min") else 0.01
         self.beta_max = finetuning_args.beta_max if hasattr(finetuning_args, "beta_max") else 1000.0
 
-        # 设置 wandb_project (如果提供)
-        if hasattr(finetuning_args, 'wandb_project') and finetuning_args.wandb_project:
-            import os
-            os.environ["WANDB_PROJECT"] = finetuning_args.wandb_project
+        # 添加对freeze_policy_model的支持
+        self.freeze_policy_model = finetuning_args.freeze_policy_model if hasattr(finetuning_args, "freeze_policy_model") else False
+
+
+
+
+
 
         self.ref_model = ref_model
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
@@ -125,6 +128,9 @@ class LEDPOTrainer(DPOTrainer):
         self.ftx_gamma = finetuning_args.pref_ftx
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
+        # 读取disco参数
+        self.use_disco = finetuning_args.use_disco if hasattr(finetuning_args, "use_disco") else False
+        self.disco_variance = finetuning_args.disco_variance if hasattr(finetuning_args, "disco_variance") else 1.0
         
         # 创建value head（只有在use_dynamic_beta为True时才会使用）
         if self.use_dynamic_beta:
@@ -160,12 +166,25 @@ class LEDPOTrainer(DPOTrainer):
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
 
+
+        # 设置 wandb_project (如果提供)
+        append_str = "_disco" if self.use_disco else ""
+        append_str += "_dynamic_beta" if self.use_dynamic_beta else ""
+        append_str += "_freeze_policy_model" if self.freeze_policy_model else ""
+
+        if hasattr(finetuning_args, 'wandb_project') and finetuning_args.wandb_project:
+            import os
+            os.environ["WANDB_PROJECT"] = finetuning_args.wandb_project 
+
+
+
+
     def __post_init__(self):
         """初始化后的设置"""
         super().__post_init__()
         
         # 确保value_head参数可训练
-        if self.use_dynamic_beta and hasattr(self, "value_head") and hasattr(self.model, "set_adapter"):
+        if self.use_dynamic_beta and hasattr(self, "value_head"):
             for param in self.value_head.parameters():
                 param.requires_grad = True
 
@@ -203,8 +222,6 @@ class LEDPOTrainer(DPOTrainer):
                 # 简单调试信息
                 print(f"beta_scale已添加到优化器，初始值: {self.value_head.beta_scale.item()}")
 
-        self.freeze_policy_model()
-        
         return self.optimizer
 
     @override
@@ -228,7 +245,7 @@ class LEDPOTrainer(DPOTrainer):
         """
         return Trainer.get_batch_samples(self, epoch_iterator, num_batches)
 
-    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", use_disco: bool = False) -> "torch.Tensor":
         r"""
         Computes ORPO's odds ratio (OR) loss for batched log probabilities of the policy model.
         """
@@ -250,54 +267,154 @@ class LEDPOTrainer(DPOTrainer):
         simpo_loss = -F.logsigmoid(self.beta * logits)
         return simpo_loss
     
-    def dpo_loss_with_dynamic_beta(
-            self,
-            policy_chosen_logps: "torch.Tensor",
-            policy_rejected_logps: "torch.Tensor",
-            reference_chosen_logps: "torch.Tensor",
-            reference_rejected_logps: "torch.Tensor",
-            dynamic_beta: "torch.Tensor" = None,
-        ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
-            """
-            实现支持动态beta的标准DPO损失
-            """
-            
-            assert dynamic_beta is not None, "dynamic_beta is None"
-            
-            pi_logratios = policy_chosen_logps - policy_rejected_logps  # shape = [batch_size]
-            ref_logratios = reference_chosen_logps - reference_rejected_logps  # shape = [batch_size]
-            
-            logits = dynamic_beta * (pi_logratios - ref_logratios)  # shape = [batch_size], 防止 beta 收到负面样本影响, 总是想着减小beta
-            
-            if self.label_smoothing > 0:
-                # 为标签应用平滑处理
-                losses = (
-                    -self.label_smoothing * F.logsigmoid(-logits) - (1 - self.label_smoothing) * F.logsigmoid(logits)
-                )
-            else:
-                losses = -F.logsigmoid(logits)
-            
-            chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps)
-            rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps)
-
-            # 计算完整的 Delta 值 (论文中的 Δ)
-            delta = pi_logratios - ref_logratios  # 完整的 Delta 值
-            
-            # 打印详细信息
-            print(f"=== 训练状态信息 ===")
+    def disco_loss(
+        self,
+        policy_chosen_logps: "torch.Tensor",
+        policy_rejected_logps: "torch.Tensor",
+        reference_chosen_logps: "torch.Tensor",
+        reference_rejected_logps: "torch.Tensor",
+        dynamic_beta: "torch.Tensor" = None,
+    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        """
+        实现DISCO (Difference In Squared Cumulative Optimization)损失
         
-            
-            # 分析 Delta 与 beta 的关系
-            for i in range(len(delta)):
-                print(f"样本 {i}: Delta={delta[i]:.4f}, beta={dynamic_beta[i]:.4f} "
-                      f"-> {'正向样本，期望beta增大' if delta[i] > 0 else '负向样本，期望beta减小'}")
-            
-            print(f"chosen_rewards: {chosen_rewards}")
-            print(f"rejected_rewards: {rejected_rewards}")
-            print("==================")
-            
-            return losses, chosen_rewards, rejected_rewards
+        DISCO使用标准正态分布的CDF来计算偏好概率，而不是标准DPO中的sigmoid函数。
+        公式：P(a1 > a2 | s) = Φ((μ(a1) - μ(a2)) / sqrt(σ²(a1) + σ²(a2)))
+        """
+        # 使用Disco方法计算偏好概率
+        preference_probs = self.compute_preference_probability(
+            policy_chosen_logps, 
+            policy_rejected_logps,
+            reference_chosen_logps,
+            reference_rejected_logps,
+            method="disco"
+        )
+        
+        # 为了数值稳定性，对概率值进行裁剪，避免log(0)或log(1)的情况
+        eps = 1e-6
+        preference_probs = torch.clamp(preference_probs, min=eps, max=1-eps)
+        
+        # 计算损失：最大化偏好概率的对数似然
+        losses = -torch.log(preference_probs)
+        
+        # 应用beta权重
+        if dynamic_beta is not None:
+            losses = dynamic_beta * losses
+        else:
+            losses = self.beta * losses
+        
+        # 计算chosen和rejected样本的奖励
+        chosen_rewards = policy_chosen_logps - reference_chosen_logps
+        rejected_rewards = policy_rejected_logps - reference_rejected_logps
+        
+        return losses, chosen_rewards, rejected_rewards
     
+    def compute_preference_probability(
+        self, 
+        chosen_logps: "torch.Tensor", 
+        rejected_logps: "torch.Tensor", 
+        reference_chosen_logps: Optional["torch.Tensor"] = None,
+        reference_rejected_logps: Optional["torch.Tensor"] = None,
+        method: Literal["standard", "disco"] = "standard",
+    ) -> "torch.Tensor":
+        """
+        计算偏好概率 P(chosen > rejected | state)
+        
+        Args:
+            chosen_logps: 策略模型对chosen样本的对数概率
+            rejected_logps: 策略模型对rejected样本的对数概率
+            reference_chosen_logps: 参考模型对chosen样本的对数概率，仅在使用参考模型时需要
+            reference_rejected_logps: 参考模型对rejected样本的对数概率，仅在使用参考模型时需要
+            method: 计算方法，"standard"使用标准DPO方法，"disco"使用Disco-DPO方法
+            variance: 在Disco方法中使用的方差值，默认为1.0
+            
+        Returns:
+            偏好概率张量
+        """
+        if method == "standard":
+            # 标准DPO的偏好概率计算：使用对数概率差的sigmoid函数
+            if reference_chosen_logps is not None and reference_rejected_logps is not None:
+                # 使用参考模型的对数概率差
+                pi_logratios = chosen_logps - rejected_logps
+                ref_logratios = reference_chosen_logps - reference_rejected_logps
+                logits = pi_logratios - ref_logratios
+            else:
+                # 不使用参考模型
+                logits = chosen_logps - rejected_logps
+                
+            # 使用sigmoid函数计算偏好概率
+            preference_probs = torch.sigmoid(logits)
+            
+        elif method == "disco":
+            # Disco-DPO的偏好概率计算：使用标准正态分布的CDF
+            if reference_chosen_logps is not None and reference_rejected_logps is not None:
+                # 计算策略模型和参考模型的对数概率差
+                chosen_diff = chosen_logps - reference_chosen_logps
+                rejected_diff = rejected_logps - reference_rejected_logps
+                
+                # 使用公式: Φ((μ(chosen) - μ(rejected)) / sqrt(σ²(chosen) + σ²(rejected)))
+                mu_diff = chosen_diff - rejected_diff
+            else:
+                # 不使用参考模型时，直接使用策略模型的对数概率差
+                mu_diff = chosen_logps - rejected_logps
+            
+            # 计算标准化差异（标准差为sqrt(2*variance)）
+            variance = self.disco_variance if hasattr(self, "disco_variance") else 1.0
+            standardized_diff = mu_diff / torch.sqrt(torch.tensor(2.0 * variance, device=chosen_logps.device))
+            
+            # 使用标准正态分布的CDF: Φ(x) = 0.5 * (1 + erf(x / sqrt(2)))
+            preference_probs = 0.5 * (1.0 + torch.erf(standardized_diff / torch.sqrt(torch.tensor(2.0, device=standardized_diff.device))))
+        else:
+            raise ValueError(f"Unknown preference probability method: {method}")
+        
+        return preference_probs
+    
+    def dpo_loss_with_dynamic_beta(
+        self,
+        policy_chosen_logps: "torch.Tensor",
+        policy_rejected_logps: "torch.Tensor",
+        reference_chosen_logps: "torch.Tensor",
+        reference_rejected_logps: "torch.Tensor",
+        dynamic_beta: "torch.Tensor" = None,
+    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        """
+        实现支持动态beta的标准DPO损失
+        """
+        
+        assert dynamic_beta is not None, "dynamic_beta is None"
+        
+        # 使用标准方法计算偏好概率
+        # preference_probs = self.compute_preference_probability(
+        #     policy_chosen_logps,
+        #     policy_rejected_logps,
+        #     reference_chosen_logps,
+        #     reference_rejected_logps,
+        #     method="standard"
+        # )
+        
+        # 获取偏好概率的logits（log-odds）
+        pi_logratios = policy_chosen_logps - policy_rejected_logps
+        ref_logratios = reference_chosen_logps - reference_rejected_logps
+        logits = dynamic_beta * (pi_logratios - ref_logratios)
+        
+        # 计算交叉熵损失
+        if self.label_smoothing > 0:
+            # 为标签应用平滑处理
+            losses = (
+                -self.label_smoothing * F.logsigmoid(-logits) - (1 - self.label_smoothing) * F.logsigmoid(logits)
+            )
+        else:
+            losses = -F.logsigmoid(logits)
+        
+        chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps)
+        rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps)
+  
+        # 计算完整的 Delta 值 (论文中的 Δ)
+        delta = pi_logratios - ref_logratios  # 完整的 Delta 值
+        
+        return losses, chosen_rewards, rejected_rewards
+
+
     def get_prompt_lengths(self, batch: Dict[str, "torch.Tensor"]) -> torch.Tensor:
         """
         计算batch中每个样本的prompt长度
@@ -411,11 +528,17 @@ class LEDPOTrainer(DPOTrainer):
             chosen_rewards = dynamic_beta * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = dynamic_beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
-            # 调用支持动态beta的DPO损失计算函数
-            # 这里的dynamic_beta会直接影响损失计算和奖励缩放
-            losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
-            )
+            # 根据use_disco参数决定使用哪种损失计算方法
+            if self.use_disco:
+                # 使用DISCO损失计算方法
+                losses, chosen_rewards, rejected_rewards = self.disco_loss(
+                    policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
+                )
+            else:
+                # 使用标准DPO损失计算方法
+                losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
+                    policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
+                )
 
         return losses, chosen_rewards, rejected_rewards, dynamic_beta
 
@@ -431,10 +554,13 @@ class LEDPOTrainer(DPOTrainer):
         """
         metrics = {}
 
-        # 冻结策略梯度更新
-        ref_context = self.accelerator.unwrap_model(model).disable_adapter()
-        with torch.no_grad(), ref_context:
-            # 前向传播获取logps和hidden states
+        if self.finetuning_args.freeze_policy_model:
+            # 冻结策略梯度更新
+            ref_context = self.accelerator.unwrap_model(model).disable_adapter()
+            with torch.no_grad(), ref_context:
+                # 前向传播获取logps和hidden states
+                outputs = self.concatenated_forward(model, batch)
+        else:
             outputs = self.concatenated_forward(model, batch)
         
         # 解包输出，处理hidden states
@@ -482,6 +608,41 @@ class LEDPOTrainer(DPOTrainer):
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
         
+        # 记录DISCO特定指标
+        if self.use_disco:
+            # metrics[f"{prefix}disco/active"] = 1.0
+            # metrics[f"{prefix}disco/variance"] = self.disco_variance
+            if reference_chosen_logps is not None and reference_rejected_logps is not None:
+                # 计算标准DPO和DISCO方法的偏好概率进行对比
+                disco_probs = self.compute_preference_probability(
+                    policy_chosen_logps, 
+                    policy_rejected_logps,
+                    reference_chosen_logps,
+                    reference_rejected_logps,
+                    method="disco"
+                )
+                standard_probs = self.compute_preference_probability(
+                    policy_chosen_logps, 
+                    policy_rejected_logps,
+                    reference_chosen_logps,
+                    reference_rejected_logps,
+                    method="standard"
+                )
+                
+                # # 记录偏好概率的平均值
+                # metrics[f"{prefix}disco/pref_prob"] = disco_probs.mean().item()
+                # metrics[f"{prefix}disco/std_pref_prob"] = standard_probs.mean().item()
+                # metrics[f"{prefix}disco/pref_prob_diff"] = (disco_probs - standard_probs).mean().item()
+                
+                # 记录概率值的分布信息
+                metrics[f"{prefix}disco/pref_prob_min"] = disco_probs.min().item()
+                metrics[f"{prefix}disco/pref_prob_max"] = disco_probs.max().item()
+                
+                # 记录模型是否正确预测偏好的比例
+                correct_pref = (disco_probs > 0.5).float().mean().item()
+                metrics[f"{prefix}disco/correct_preference"] = correct_pref
+                
+   
         return losses.mean(), metrics
 
     @override
@@ -520,21 +681,6 @@ class LEDPOTrainer(DPOTrainer):
 
         return Trainer.log(self, logs, *args, **kwargs)
         
-    # 添加方法以冻结策略模型参数，只训练value head
-    def freeze_policy_model(self):
-        """冻结策略模型参数，只训练value head"""
-        for param in self.model.parameters():
-            param.requires_grad = False
-        
-        # 确保value_head参数可训练
-        if self.use_dynamic_beta:
-            for param in self.value_head.parameters():
-                param.requires_grad = True
-                
-            # 打印训练参数数量
-            trainable_params = sum(p.numel() for p in self.value_head.parameters() if p.requires_grad)
-            print(f"冻结策略模型后，可训练参数数量: {trainable_params}，仅包含value head网络参数")
-
     # 添加重写compute_reference_log_probs方法
     @override
     def compute_reference_log_probs(
