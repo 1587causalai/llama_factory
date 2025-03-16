@@ -1,0 +1,30 @@
+# Delta感知ValueHead变体实验结果
+
+## 原始Delta感知版
+最终beta_scale = 0.9349
+最终beta平均值 = 0.9723
+最终pos_beta = 1.1219
+最终neg_beta = 0.7479
+最终pos_beta/neg_beta比值 = 1.5000
+
+## 改进1-更高初值+更大差异
+最终beta_scale = 9.9895
+最终beta平均值 = 13.9852
+最终pos_beta = 19.9789
+最终neg_beta = 4.9947
+最终pos_beta/neg_beta比值 = 4.0000
+
+## 改进2-Softplus激活
+最终beta_scale = 3.8123
+最终beta平均值 = 3.9648
+最终pos_beta = 4.5747
+最终neg_beta = 3.0498
+最终pos_beta/neg_beta比值 = 1.5000
+
+## 改进3-综合改进
+最终beta_scale = 7.9946
+最终beta平均值 = 11.1924
+最终pos_beta = 15.9891
+最终neg_beta = 3.9973
+最终pos_beta/neg_beta比值 = 4.0000
+

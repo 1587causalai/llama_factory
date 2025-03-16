@@ -1,0 +1,3 @@
+  discodpo             [m e1d65193 quick
+* [32mfix/beta_optimization[m 875558a1 修复LEDPO Beta趋零问题 - 使用detach()代替torch.no_grad()并实现多种解决方案变体
+  master               [m cec1af9b quick

@@ -20,12 +20,6 @@ from collections import defaultdict
 from contextlib import nullcontext
 from types import MethodType
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union, Any
-import os
-import math
-from dataclasses import dataclass, field
-import sys
-import numpy as np
-import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -55,48 +49,72 @@ class ValueHead(nn.Module):
     
     def __init__(self, hidden_size: int, beta_min: float = 0.01, beta_max: float = 100.0):
         super().__init__()
-        # 初始化beta_scale为10.0
-        self.beta_scale = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        # 初始化beta_scale为10.0，这是一个全局缩放因子，使用更大的初始值
+        self.beta_scale = nn.Parameter(torch.tensor(10.0), requires_grad=True)
         
-        # 构建value head网络
+        # 构建更简单的value head网络，减少层数，避免梯度消失
         self.value_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
-            nn.GELU(),
+            nn.GELU(),  # 使用GELU激活函数代替ReLU
             nn.Linear(hidden_size // 2, 1),
-            nn.Softplus()  # 将输出映射到0-1之间
+            nn.Softplus()  # 确保输出为正值
         )   
         
         # 初始化网络权重
-        self._init_weights()
+        self.value_head.apply(self.init_weights)
         
         # 设置beta的最小值和最大值
         self.beta_min = beta_min
         self.beta_max = beta_max
         
-    def _init_weights(self):
-        """初始化网络权重"""
-        for name, module in self.value_head.named_modules():
-            if isinstance(module, nn.Linear):
-                if name == '2':  # 最后一层
-                    nn.init.normal_(module.weight, mean=0.1, std=0.2)
-                    nn.init.constant_(module.bias, 0.5)  # 正偏置使得初始输出更大
-                else:
-                    nn.init.normal_(module.weight, mean=0.0, std=0.1)
-                    nn.init.constant_(module.bias, 0.1)
+        # 打印初始化信息
+        print(f"[INFO] ValueHead initialized with beta_scale={self.beta_scale.item():.4f}, beta_min={beta_min}, beta_max={beta_max}")
+        
+
+    def init_weights(self, module):
+        """初始化网络权重，使用更大的标准差"""
+        if isinstance(module, nn.Linear):
+            # 使用正态分布初始化权重，均值为0，标准差为0.1（比原来的0.01大）
+            nn.init.normal_(module.weight, mean=0.0, std=0.1)
+            # 将偏置初始化为小正数，而不是0，以避免初始输出过小
+            nn.init.constant_(module.bias, 0.1)
+            
+            # 打印权重初始化信息
+            print(f"[DEBUG] Initialized Linear layer: weight_shape={module.weight.shape}, bias_shape={module.bias.shape}")
+            print(f"[DEBUG] Weight stats: mean={module.weight.mean().item():.4f}, std={module.weight.std().item():.4f}")
+            print(f"[DEBUG] Bias stats: mean={module.bias.mean().item():.4f}, std={module.bias.std().item():.4f}")
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """前向传播函数"""
-        # 获取0-1范围的原始beta值
+        """
+        前向传播函数
+        
+        Args:
+            hidden_states: 最后一层hidden states，形状为[batch_size, hidden_size]
+            
+        Returns:
+            beta值，形状为[batch_size]
+        """
+        # 输入是最后一层hidden states
         raw_beta = self.value_head(hidden_states)
         
-        # 确保beta_scale始终为正
+        # 应用全局缩放因子 - 添加防止beta_scale变小的调整
+        # 用softplus确保beta_scale始终为正，起点为10.0
         beta_scale_positive = F.softplus(self.beta_scale)
+        # 使用beta_scale_positive作为beta值的缩放因子
+        scaled_beta = beta_scale_positive * raw_beta
         
-        # 将0-1映射到beta_min到beta_max范围
-        beta_range = self.beta_max - self.beta_min
-        scaled_beta = self.beta_min + raw_beta.squeeze(-1) * beta_range * (beta_scale_positive / 10.0)
+        # 将输出截断到[beta_min, beta_max]范围
+        clamped_beta = torch.clamp(scaled_beta, min=self.beta_min, max=self.beta_max)
         
-        return scaled_beta
+        # 打印调试信息
+        if torch.rand(1).item() < 0.05:  # 增加打印概率到5%
+            print(f"[DEBUG] ValueHead forward - raw_beta: min={raw_beta.min().item():.4f}, max={raw_beta.max().item():.4f}, mean={raw_beta.mean().item():.4f}")
+            print(f"[DEBUG] ValueHead forward - beta_scale (raw): {self.beta_scale.item():.4f}")
+            print(f"[DEBUG] ValueHead forward - beta_scale (positive): {beta_scale_positive.item():.4f}")
+            print(f"[DEBUG] ValueHead forward - scaled_beta: min={scaled_beta.min().item():.4f}, max={scaled_beta.max().item():.4f}, mean={scaled_beta.mean().item():.4f}")
+            print(f"[DEBUG] ValueHead forward - clamped_beta: min={clamped_beta.min().item():.4f}, max={clamped_beta.max().item():.4f}, mean={clamped_beta.mean().item():.4f}")
+        
+        return clamped_beta
 
 
 class LEDPOTrainer(DPOTrainer):
@@ -131,35 +149,17 @@ class LEDPOTrainer(DPOTrainer):
         self._peft_has_been_casted_to_bf16 = False
 
         # 添加对value head的支持
-        self.use_dynamic_beta = finetuning_args.use_dynamic_beta if hasattr(finetuning_args, "use_dynamic_beta") else True
-        self.beta_min = finetuning_args.beta_min if hasattr(finetuning_args, "beta_min") else 0.001
+        self.use_dynamic_beta = finetuning_args.use_dynamic_beta if hasattr(finetuning_args, "use_dynamic_beta") else False
+        self.beta_min = finetuning_args.beta_min if hasattr(finetuning_args, "beta_min") else 0.01
         self.beta_max = finetuning_args.beta_max if hasattr(finetuning_args, "beta_max") else 1000.0
 
         # 添加对freeze_policy_model的支持
         self.freeze_policy_model = finetuning_args.freeze_policy_model if hasattr(finetuning_args, "freeze_policy_model") else False
 
-        # 添加beta分析记录
-        self.beta_history = {
-            "train": {
-                "steps": [],
-                "beta_scale": [],
-                "pos_beta": [],
-                "neg_beta": [],
-                "pos_neg_ratio": [],
-                "loss": []
-            },
-            "eval": {
-                "steps": [],
-                "beta_scale": [],
-                "pos_beta": [],
-                "neg_beta": [],
-                "pos_neg_ratio": [],
-                "loss": []
-            }
-        }
-        self.global_step = 0
-        self.plot_dir = os.path.join(kwargs.get("args").output_dir, "beta_analysis")
-        os.makedirs(self.plot_dir, exist_ok=True)
+
+
+
+
 
         self.ref_model = ref_model
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
@@ -215,6 +215,7 @@ class LEDPOTrainer(DPOTrainer):
         append_str += "_freeze_policy_model" if self.freeze_policy_model else ""
 
         if hasattr(finetuning_args, 'wandb_project') and finetuning_args.wandb_project:
+            import os
             os.environ["WANDB_PROJECT"] = finetuning_args.wandb_project 
 
 
@@ -446,6 +447,10 @@ class LEDPOTrainer(DPOTrainer):
         # 应用动态beta - 这是关键部分
         logits = dynamic_beta * delta
         
+        # 添加调试信息
+        print(f"[DEBUG] DPO Loss - Delta stats: min={delta.min().item():.4f}, max={delta.max().item():.4f}, mean={delta.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Logits after beta: min={logits.min().item():.4f}, max={logits.max().item():.4f}, mean={logits.mean().item():.4f}")
+        
         # 计算交叉熵损失
         if self.label_smoothing > 0:
             # 为标签应用平滑处理
@@ -459,6 +464,11 @@ class LEDPOTrainer(DPOTrainer):
         chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps)
         rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps)
         
+        # 添加调试信息
+        print(f"[DEBUG] DPO Loss - Loss stats: min={losses.min().item():.4f}, max={losses.max().item():.4f}, mean={losses.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Chosen rewards: min={chosen_rewards.min().item():.4f}, max={chosen_rewards.max().item():.4f}, mean={chosen_rewards.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Rejected rewards: min={rejected_rewards.min().item():.4f}, max={rejected_rewards.max().item():.4f}, mean={rejected_rewards.mean().item():.4f}")
+  
         return losses, chosen_rewards, rejected_rewards
 
 
@@ -553,43 +563,42 @@ class LEDPOTrainer(DPOTrainer):
         reference_rejected_logps: Optional["torch.Tensor"],
         chosen_prompt_last_token_hidden: Optional["torch.Tensor"] = None,
     ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor", Optional["torch.Tensor"]]:
-        """使用动态beta计算preference loss"""
-        # 初始化dynamic_beta
+        """
+        使用动态beta计算preference loss
+        """
+        # 初始化dynamic_beta和beta
         dynamic_beta = self.beta  # 默认使用固定beta
-        
-        # 计算delta值(如果使用参考模型)
-        delta = None
-        if reference_chosen_logps is not None and reference_rejected_logps is not None:
-            pi_logratios = policy_chosen_logps - policy_rejected_logps
-            ref_logratios = reference_chosen_logps - reference_rejected_logps
-            delta = pi_logratios - ref_logratios
         
         # 如果使用动态beta且提供了hidden states
         if self.use_dynamic_beta and chosen_prompt_last_token_hidden is not None:
             # 计算dynamic_beta
-            dynamic_beta = self.value_head(chosen_prompt_last_token_hidden)
+            dynamic_beta = self.value_head(chosen_prompt_last_token_hidden).squeeze(-1)
             
-            # 根据delta符号增强beta分化
-            if delta is not None:
-                # 创建delta>0和delta<0的掩码
-                positive_delta_mask = (delta > 0)
-                negative_delta_mask = (delta <= 0)
-                
-                # 记录原始beta值
-                original_beta = dynamic_beta.clone()
-                
-                # 对于正delta，增加beta值；对于负delta，减小beta值
-                beta_adjust_factor = 1.2  # 调整系数
-                
-                # 创建系数张量并应用调整
-                beta_multiplier = torch.ones_like(dynamic_beta)
-                beta_multiplier[positive_delta_mask] = beta_adjust_factor
-                beta_multiplier[negative_delta_mask] = 1.0 / beta_adjust_factor
-                
-                # 应用调整
-                dynamic_beta = dynamic_beta * beta_multiplier
-        
-        # 计算损失
+            # 添加调试信息
+            print(f"[DEBUG] ValueHead beta_scale: {self.value_head.beta_scale.item():.4f}")
+            print(f"[DEBUG] Dynamic beta stats: min={dynamic_beta.min().item():.4f}, max={dynamic_beta.max().item():.4f}, mean={dynamic_beta.mean().item():.4f}")
+            
+        # 计算delta值(如果使用参考模型)
+        if reference_chosen_logps is not None and reference_rejected_logps is not None:
+            pi_logratios = policy_chosen_logps - policy_rejected_logps
+            ref_logratios = reference_chosen_logps - reference_rejected_logps
+            delta = pi_logratios - ref_logratios
+            
+            # 添加调试信息
+            positive_delta_mask = (delta > 0)
+            negative_delta_mask = (delta < 0)
+            pos_count = positive_delta_mask.sum().item()
+            neg_count = negative_delta_mask.sum().item()
+            
+            print(f"[DEBUG] Delta stats: min={delta.min().item():.4f}, max={delta.max().item():.4f}, mean={delta.mean().item():.4f}")
+            print(f"[DEBUG] Delta distribution: positive={pos_count}, negative={neg_count}, ratio={pos_count/(pos_count+neg_count):.4f}")
+            
+            if self.use_dynamic_beta:
+                # 计算正负delta样本对应的beta平均值
+                positive_beta_avg = dynamic_beta[positive_delta_mask].mean().item() if pos_count > 0 else 0
+                negative_beta_avg = dynamic_beta[negative_delta_mask].mean().item() if neg_count > 0 else 0
+                print(f"[DEBUG] Beta for positive delta: {positive_beta_avg:.4f}, Beta for negative delta: {negative_beta_avg:.4f}")
+            
         if not self.finetuning_args.use_ref_model:
             if self.loss_type == "orpo":
                 losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, dynamic_beta)
@@ -601,127 +610,20 @@ class LEDPOTrainer(DPOTrainer):
             chosen_rewards = dynamic_beta * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = dynamic_beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
+            # 根据use_disco参数决定使用哪种损失计算方法
             if self.use_disco:
+                # 使用DISCO损失计算方法
                 losses, chosen_rewards, rejected_rewards = self.disco_loss(
                     policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
                 )
             else:
+                # 使用标准DPO损失计算方法
                 losses, chosen_rewards, rejected_rewards = self.dpo_loss_with_dynamic_beta(
                     policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, dynamic_beta
                 )
-        
-        # 添加beta_scale正则化项
-        if self.use_dynamic_beta and hasattr(self, "value_head"):
-            # 使用L2正则化防止beta_scale过小
-            beta_scale_regularization = 0.01 * torch.square(10.0 - F.softplus(self.value_head.beta_scale))
-            # 添加到损失中
-            losses = losses + beta_scale_regularization
-            
+
         return losses, chosen_rewards, rejected_rewards, dynamic_beta
 
-    def beta_analysis(self, metrics: Dict[str, float], loss: float, train_eval: str = "train") -> None:
-        """
-        分析和记录beta相关指标
-        
-        Args:
-            metrics: 训练/评估指标字典
-            loss: 当前损失值
-            train_eval: 'train'或'eval'，表示当前阶段
-        """
-        prefix = "eval_" if train_eval == "eval" else ""
-        step = self.global_step
-        
-        # 提取beta指标
-        beta_scale = metrics.get(f"{prefix}beta/scale", 0.0)
-        pos_beta = metrics.get(f"{prefix}beta/positive_delta_avg", 0.0)
-        neg_beta = metrics.get(f"{prefix}beta/negative_delta_avg", 0.0)
-        pos_neg_ratio = metrics.get(f"{prefix}beta/pos_neg_ratio", 0.0)
-        
-        # 记录到历史数据中
-        self.beta_history[train_eval]["steps"].append(step)
-        self.beta_history[train_eval]["beta_scale"].append(beta_scale)
-        self.beta_history[train_eval]["pos_beta"].append(pos_beta)
-        self.beta_history[train_eval]["neg_beta"].append(neg_beta)
-        self.beta_history[train_eval]["pos_neg_ratio"].append(pos_neg_ratio)
-        self.beta_history[train_eval]["loss"].append(loss)
-        
-        # 每50步打印一次详细信息
-        if train_eval == "train" and (step % 50 == 0 or step < 10):
-            print(f"\n===== LEDPO Beta分析 Step {step} =====")
-            print(f"beta_scale = {beta_scale:.4f}")
-            print(f"正delta对应beta (pos_beta) = {pos_beta:.4f}")
-            print(f"负delta对应beta (neg_beta) = {neg_beta:.4f}")
-            print(f"pos_beta/neg_beta比值 = {pos_neg_ratio:.4f}")
-            print(f"当前损失 = {loss:.4f}")
-            print("="*35)
-    
-    def plot_beta_trends(self) -> None:
-        """绘制beta相关指标的趋势图"""
-        # 确保有足够的数据点
-        if len(self.beta_history["train"]["steps"]) < 2:
-            return
-        
-        # 创建绘图
-        plt.figure(figsize=(20, 15))
-        
-        # 1. 绘制beta_scale变化
-        plt.subplot(2, 2, 1)
-        plt.plot(self.beta_history["train"]["steps"], self.beta_history["train"]["beta_scale"], 'b-', label='train')
-        if self.beta_history["eval"]["steps"]:
-            plt.plot(self.beta_history["eval"]["steps"], self.beta_history["eval"]["beta_scale"], 'r-', label='eval')
-        plt.xlabel("Steps")
-        plt.ylabel("Beta Scale")
-        plt.title("Beta Scale Trend")
-        plt.legend()
-        plt.grid(True)
-        
-        # 2. 绘制pos_beta和neg_beta变化
-        plt.subplot(2, 2, 2)
-        plt.plot(self.beta_history["train"]["steps"], self.beta_history["train"]["pos_beta"], 'g-', label='train_pos_beta')
-        plt.plot(self.beta_history["train"]["steps"], self.beta_history["train"]["neg_beta"], 'r-', label='train_neg_beta')
-        if self.beta_history["eval"]["steps"]:
-            plt.plot(self.beta_history["eval"]["steps"], self.beta_history["eval"]["pos_beta"], 'g--', label='eval_pos_beta')
-            plt.plot(self.beta_history["eval"]["steps"], self.beta_history["eval"]["neg_beta"], 'r--', label='eval_neg_beta')
-        plt.xlabel("Steps")
-        plt.ylabel("Beta Value")
-        plt.title("Positive/Negative Delta Beta Trends")
-        plt.legend()
-        plt.grid(True)
-        
-        # 3. 绘制pos_beta/neg_beta比值变化
-        plt.subplot(2, 2, 3)
-        plt.plot(self.beta_history["train"]["steps"], self.beta_history["train"]["pos_neg_ratio"], 'b-', label='train')
-        if self.beta_history["eval"]["steps"]:
-            plt.plot(self.beta_history["eval"]["steps"], self.beta_history["eval"]["pos_neg_ratio"], 'r-', label='eval')
-        plt.axhline(y=1.0, color='k', linestyle='--', alpha=0.5)  # 添加y=1的参考线
-        plt.xlabel("Steps")
-        plt.ylabel("Pos Beta / Neg Beta Ratio")
-        plt.title("Ratio of Positive to Negative Delta Beta")
-        plt.legend()
-        plt.grid(True)
-        
-        # 4. 绘制损失变化
-        plt.subplot(2, 2, 4)
-        plt.plot(self.beta_history["train"]["steps"], self.beta_history["train"]["loss"], 'b-', label='train')
-        if self.beta_history["eval"]["steps"]:
-            plt.plot(self.beta_history["eval"]["steps"], self.beta_history["eval"]["loss"], 'r-', label='eval')
-        plt.xlabel("Steps")
-        plt.ylabel("Loss")
-        plt.title("Training/Evaluation Loss")
-        plt.legend()
-        plt.grid(True)
-        
-        plt.suptitle("LEDPO Beta Analysis", fontsize=16)
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
-        
-        # 保存图形
-        plt.savefig(os.path.join(self.plot_dir, f"beta_trends_step_{self.global_step}.png"))
-        plt.savefig(os.path.join(self.plot_dir, "beta_trends_latest.png"))  # 始终覆盖最新的
-        plt.close()
-        
-        # 保存原始数据以便后续分析
-        np.save(os.path.join(self.plot_dir, "beta_history.npy"), self.beta_history)
-    
     @override
     def get_batch_loss_metrics(
         self,
@@ -729,41 +631,26 @@ class LEDPOTrainer(DPOTrainer):
         batch: Dict[str, "torch.Tensor"],
         train_eval: Literal["train", "eval"] = "train",
     ) -> Tuple["torch.Tensor", Dict[str, "torch.Tensor"]]:
-        """计算DPO loss和相关指标"""
+        """
+        计算DPO loss和其他指标，包括动态beta值
+        """
         metrics = {}
 
         if self.finetuning_args.freeze_policy_model:
-            # 冻结策略梯度更新 - 但不阻断ValueHead梯度
+            # 冻结策略梯度更新
             ref_context = self.accelerator.unwrap_model(model).disable_adapter()
-            with ref_context:
+            with torch.no_grad(), ref_context:
                 # 前向传播获取logps和hidden states
                 outputs = self.concatenated_forward(model, batch)
-                
-                # 分离策略模型的logps，但保留hidden states的梯度
-                if len(outputs) == 6:
-                    policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg, chosen_prompt_last_token_hidden = outputs
-                    # 只分离logps和logits，保持hidden states的梯度连接
-                    policy_chosen_logps = policy_chosen_logps.detach()
-                    policy_rejected_logps = policy_rejected_logps.detach()
-                    policy_chosen_logits = policy_chosen_logits.detach()
-                    policy_rejected_logits = policy_rejected_logits.detach()
-                    policy_chosen_logps_avg = policy_chosen_logps_avg.detach()
-                else:
-                    policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg = outputs
-                    # 分离所有输出
-                    policy_chosen_logps = policy_chosen_logps.detach()
-                    policy_rejected_logps = policy_rejected_logps.detach()
-                    policy_chosen_logits = policy_chosen_logits.detach()
-                    policy_rejected_logits = policy_rejected_logits.detach()
-                    policy_chosen_logps_avg = policy_chosen_logps_avg.detach()
-                    chosen_prompt_last_token_hidden = None
         else:
             outputs = self.concatenated_forward(model, batch)
-            if len(outputs) == 6:
-                policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg, chosen_prompt_last_token_hidden = outputs
-            else:
-                policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg = outputs
-                chosen_prompt_last_token_hidden = None
+        
+        # 解包输出，处理hidden states
+        if len(outputs) == 6:  # 如果返回了hidden states
+            policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg, chosen_prompt_last_token_hidden = outputs
+        else:  # 兼容旧版本
+            policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg = outputs
+            chosen_prompt_last_token_hidden = None
 
         # 获取参考模型的log probs
         reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
@@ -777,7 +664,7 @@ class LEDPOTrainer(DPOTrainer):
             chosen_prompt_last_token_hidden,
         )
         
-        # 记录delta和beta统计信息
+        # 记录delta和beta统计信息 - 新增代码
         if self.use_dynamic_beta and reference_chosen_logps is not None and reference_rejected_logps is not None:
             # 计算delta值
             pi_logratios = policy_chosen_logps - policy_rejected_logps
@@ -799,42 +686,76 @@ class LEDPOTrainer(DPOTrainer):
             # 计算正负delta样本对应的beta平均值
             positive_beta_avg = (dynamic_beta * positive_delta_mask).sum().item() / pos_count
             negative_beta_avg = (dynamic_beta * negative_delta_mask).sum().item() / neg_count
-            pos_neg_ratio = positive_beta_avg / negative_beta_avg if negative_beta_avg > 0 else 0.0
             
             # 记录指标
             prefix = "eval_" if train_eval == "eval" else ""
             metrics[f"{prefix}delta/mean"] = delta.mean().item()
             metrics[f"{prefix}beta/positive_delta_avg"] = positive_beta_avg
             metrics[f"{prefix}beta/negative_delta_avg"] = negative_beta_avg
-            metrics[f"{prefix}beta/scale"] = F.softplus(self.value_head.beta_scale).item()
-            metrics[f"{prefix}beta/pos_neg_ratio"] = pos_neg_ratio
+            metrics[f"{prefix}delta/positive_count"] = pos_count
+            metrics[f"{prefix}delta/negative_count"] = neg_count
+            metrics[f"{prefix}delta/positive_ratio"] = pos_count / (pos_count + neg_count)
         
         # 计算SFT损失并添加到总损失
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
             losses = losses + self.ftx_gamma * sft_loss
 
-        # 记录基本指标
+        # 记录指标
         prefix = "eval_" if train_eval == "eval" else ""
         metrics[f"{prefix}rewards/chosen"] = chosen_rewards.mean().item()
         metrics[f"{prefix}rewards/rejected"] = rejected_rewards.mean().item()
         metrics[f"{prefix}rewards/accuracies"] = (chosen_rewards > rejected_rewards).float().mean().item()
         metrics[f"{prefix}rewards/margins"] = (chosen_rewards - rejected_rewards).mean().item()
+        metrics[f"{prefix}logps/chosen"] = policy_chosen_logps.mean().item()
+        metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
+        metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
+        metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
+        
+        # 记录动态beta相关指标
+        if self.use_dynamic_beta:
+            metrics[f"{prefix}beta/value"] = dynamic_beta.mean().item()
+            # metrics[f"{prefix}beta/min"] = dynamic_beta.min().item() 
+            # metrics[f"{prefix}beta/max"] = dynamic_beta.max().item()
+            metrics[f"{prefix}beta/scale"] = self.value_head.beta_scale.item()  
         
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
         
-        # 更新步数计数器(仅在训练阶段)
-        if train_eval == "train":
-            self.global_step += 1
-            
-            # 每隔一定步数绘制图表
-            if self.global_step % 100 == 0:
-                self.plot_beta_trends()
-        
-        # 分析beta指标
-        self.beta_analysis(metrics, losses.mean().item(), train_eval)
-        
+        # 记录DISCO特定指标
+        if self.use_disco:
+            # metrics[f"{prefix}disco/active"] = 1.0
+            # metrics[f"{prefix}disco/variance"] = self.disco_variance
+            if reference_chosen_logps is not None and reference_rejected_logps is not None:
+                # 计算标准DPO和DISCO方法的偏好概率进行对比
+                disco_probs = self.compute_preference_probability(
+                    policy_chosen_logps, 
+                    policy_rejected_logps,
+                    reference_chosen_logps,
+                    reference_rejected_logps,
+                    method="disco"
+                )
+                standard_probs = self.compute_preference_probability(
+                    policy_chosen_logps, 
+                    policy_rejected_logps,
+                    reference_chosen_logps,
+                    reference_rejected_logps,
+                    method="standard"
+                )
+                
+                # # 记录偏好概率的平均值
+                # metrics[f"{prefix}disco/pref_prob"] = disco_probs.mean().item()
+                # metrics[f"{prefix}disco/std_pref_prob"] = standard_probs.mean().item()
+                # metrics[f"{prefix}disco/pref_prob_diff"] = (disco_probs - standard_probs).mean().item()
+                
+                # 记录概率值的分布信息
+                metrics[f"{prefix}disco/pref_prob_min"] = disco_probs.min().item()
+                metrics[f"{prefix}disco/pref_prob_max"] = disco_probs.max().item()
+                
+                # 记录模型是否正确预测偏好的比例
+                correct_pref = (disco_probs > 0.5).float().mean().item()
+                metrics[f"{prefix}disco/correct_preference"] = correct_pref
+   
         return losses.mean(), metrics
 
     @override
@@ -878,7 +799,9 @@ class LEDPOTrainer(DPOTrainer):
     def compute_reference_log_probs(
         self, model: "PreTrainedModel", batch: Dict[str, "torch.Tensor"]
     ) -> Tuple[Optional["torch.Tensor"], Optional["torch.Tensor"]]:
-        """重写父类方法以接受model参数"""
+        """
+        重写父类方法以接受model参数
+        """
         if not self.finetuning_args.use_ref_model:
             return None, None
 
@@ -889,148 +812,8 @@ class LEDPOTrainer(DPOTrainer):
             ref_model = self.ref_model
             ref_context = nullcontext()
 
-        # 不使用torch.no_grad()，而是在获取输出后detach
-        with ref_context:
-            reference_outputs = self.concatenated_forward(ref_model, batch)
-            
-            # 根据输出长度解包并detach
-            if len(reference_outputs) >= 2:
-                reference_chosen_logps, reference_rejected_logps = reference_outputs[:2]
-                # 分离梯度
-                reference_chosen_logps = reference_chosen_logps.detach()
-                reference_rejected_logps = reference_rejected_logps.detach()
-            else:
-                return None, None
+        with torch.no_grad(), ref_context:
+            reference_chosen_logps, reference_rejected_logps, *_ = self.concatenated_forward(ref_model, batch)
 
         return reference_chosen_logps, reference_rejected_logps
-
-    def analyze_beta_results(self, save_summary: bool = True) -> Dict[str, Any]:
-        """
-        分析beta训练结果并生成总结报告
-        
-        Args:
-            save_summary: 是否保存总结到文件
-            
-        Returns:
-            包含分析结果的字典
-        """
-        print("\n" + "="*50)
-        print("LEDPO Beta 训练结果分析")
-        print("="*50)
-        
-        # 检查是否有足够的数据
-        if len(self.beta_history["train"]["steps"]) < 10:
-            print("训练数据不足，无法进行完整分析")
-            return {"success": False, "reason": "训练数据不足"}
-        
-        # 1. 提取关键指标
-        train_data = self.beta_history["train"]
-        
-        # 获取最初和最后的beta_scale
-        initial_beta_scale = train_data["beta_scale"][0] if train_data["beta_scale"] else 0.0
-        final_beta_scale = train_data["beta_scale"][-1] if train_data["beta_scale"] else 0.0
-        beta_scale_change = final_beta_scale - initial_beta_scale
-        
-        # 计算pos_beta和neg_beta的平均值（最后20%的步骤）
-        last_20_percent = max(1, len(train_data["steps"]) // 5)
-        final_pos_beta = np.mean(train_data["pos_beta"][-last_20_percent:])
-        final_neg_beta = np.mean(train_data["neg_beta"][-last_20_percent:])
-        final_pos_neg_ratio = final_pos_beta / final_neg_beta if final_neg_beta > 0 else 0.0
-        
-        # 2. 计算趋势
-        # 检查beta_scale是否在下降
-        beta_scale_trend = "下降" if beta_scale_change < -0.1 else "上升" if beta_scale_change > 0.1 else "稳定"
-        
-        # 检查beta值有没有趋零问题
-        has_zero_beta_issue = final_pos_beta < self.beta_min * 2 or final_neg_beta < self.beta_min * 2
-        
-        # 检查pos_beta和neg_beta的分化情况
-        has_good_differentiation = final_pos_neg_ratio > 1.2  # 理想情况下pos_beta应该明显大于neg_beta
-        
-        # 3. 总结结果
-        result = {
-            "success": not has_zero_beta_issue and has_good_differentiation,
-            "initial_beta_scale": initial_beta_scale,
-            "final_beta_scale": final_beta_scale,
-            "beta_scale_change": beta_scale_change,
-            "beta_scale_trend": beta_scale_trend,
-            "final_pos_beta": final_pos_beta,
-            "final_neg_beta": final_neg_beta,
-            "final_pos_neg_ratio": final_pos_neg_ratio,
-            "has_zero_beta_issue": has_zero_beta_issue,
-            "has_good_differentiation": has_good_differentiation,
-            "freeze_policy_model": self.freeze_policy_model,
-        }
-        
-        # 4. 打印总结
-        print(f"初始 beta_scale: {initial_beta_scale:.4f}")
-        print(f"最终 beta_scale: {final_beta_scale:.4f} ({beta_scale_trend})")
-        print(f"最终平均正delta beta值: {final_pos_beta:.4f}")
-        print(f"最终平均负delta beta值: {final_neg_beta:.4f}")
-        print(f"最终 pos_beta/neg_beta 比值: {final_pos_neg_ratio:.4f}")
-        print(f"beta趋零问题: {'存在' if has_zero_beta_issue else '不存在'}")
-        print(f"beta值分化: {'良好' if has_good_differentiation else '不足'}")
-        print(f"freeze_policy_model设置: {self.freeze_policy_model}")
-        
-        # 结论
-        print("\n结论:")
-        if not has_zero_beta_issue and has_good_differentiation:
-            print("✅ LEDPO训练正常，beta值表现良好。")
-        else:
-            print("❌ LEDPO训练异常，beta值可能存在问题。")
-            
-            if has_zero_beta_issue:
-                print("  - beta值过小，可能出现了趋零问题")
-                print("  - 建议: 关闭freeze_policy_model或增加beta_min")
-                
-            if not has_good_differentiation:
-                print("  - pos_beta和neg_beta没有良好分化")
-                print("  - 建议: 检查损失函数计算或增加正反例对比度")
-        
-        # 5. 保存总结到文件
-        if save_summary:
-            summary_path = os.path.join(self.plot_dir, "beta_analysis_summary.txt")
-            with open(summary_path, "w", encoding="utf-8") as f:
-                f.write("LEDPO Beta 训练结果分析\n")
-                f.write("="*30 + "\n\n")
-                f.write(f"初始 beta_scale: {initial_beta_scale:.4f}\n")
-                f.write(f"最终 beta_scale: {final_beta_scale:.4f} ({beta_scale_trend})\n")
-                f.write(f"最终平均正delta beta值: {final_pos_beta:.4f}\n")
-                f.write(f"最终平均负delta beta值: {final_neg_beta:.4f}\n")
-                f.write(f"最终 pos_beta/neg_beta 比值: {final_pos_neg_ratio:.4f}\n")
-                f.write(f"beta趋零问题: {'存在' if has_zero_beta_issue else '不存在'}\n")
-                f.write(f"beta值分化: {'良好' if has_good_differentiation else '不足'}\n")
-                f.write(f"freeze_policy_model设置: {self.freeze_policy_model}\n\n")
-                
-                f.write("结论:\n")
-                if not has_zero_beta_issue and has_good_differentiation:
-                    f.write("✅ LEDPO训练正常，beta值表现良好。\n")
-                else:
-                    f.write("❌ LEDPO训练异常，beta值可能存在问题。\n")
-                    
-                    if has_zero_beta_issue:
-                        f.write("  - beta值过小，可能出现了趋零问题\n")
-                        f.write("  - 建议: 关闭freeze_policy_model或增加beta_min\n")
-                        
-                    if not has_good_differentiation:
-                        f.write("  - pos_beta和neg_beta没有良好分化\n")
-                        f.write("  - 建议: 检查损失函数计算或增加正反例对比度\n")
-                
-            print(f"\n分析总结已保存到: {summary_path}")
-        
-        # 在分析完成后再次绘制最终图表
-        self.plot_beta_trends()
-        
-        return result
-
-    # 重写train方法以在训练结束后进行分析
-    @override
-    def train(self, *args, **kwargs):
-        # 调用原始的train方法
-        result = super().train(*args, **kwargs)
-        
-        # 训练结束后进行beta分析
-        self.analyze_beta_results()
-        
-        return result
 
