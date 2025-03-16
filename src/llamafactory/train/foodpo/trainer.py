@@ -88,6 +88,7 @@ class CustomFooDPOTrainer(DPOTrainer):
 
         # dynamic beta
         self.use_dynamic_beta = getattr(finetuning_args, "use_dynamic_beta", False)
+        self.freeze_policy = getattr(finetuning_args, "freeze_policy", False)
         
         if self.use_dynamic_beta:
             from .beta_head import HiddenStateBetaHead
@@ -129,17 +130,18 @@ class CustomFooDPOTrainer(DPOTrainer):
         if self.use_dynamic_beta:
             self.beta_head = self.beta_head.to(self.accelerator.device)
             
-            # 冻结策略模型参数但保持beta_head可训练
-            print("\n[FREEZE] 冻结策略模型参数，只训练beta_head...")
-            for param in self.model.parameters():
-                param.requires_grad = False
+            # 根据freeze_policy参数决定是否冻结策略模型
+            if self.freeze_policy:
+                print("\n[FREEZE] 冻结策略模型参数，只训练beta_head...")
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                    
+                # 确保beta_head参数可训练
+                for param in self.beta_head.parameters():
+                    param.requires_grad = True
                 
-            # 确保beta_head参数可训练
-            for param in self.beta_head.parameters():
-                param.requires_grad = True
-                
-            # 测试梯度流动
-            self.test_grad_flow()
+                # 测试梯度流动
+                self.test_grad_flow()
             
     def test_grad_flow(self):
         """测试beta_head梯度流动是否正常"""

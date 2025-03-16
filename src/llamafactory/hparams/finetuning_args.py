@@ -134,6 +134,10 @@ class RLHFArguments:
         default=False,
         metadata={"help": "Whether to use dynamic beta."},
     )
+    freeze_policy: bool = field(
+        default=False,
+        metadata={"help": "Whether to freeze the policy model parameters (only train beta_head)."},
+    )
     pref_ftx: float = field(
         default=0.0,
         metadata={"help": "The supervised fine-tuning loss coefficient in DPO training."},

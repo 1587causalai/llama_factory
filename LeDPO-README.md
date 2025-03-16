@@ -156,7 +156,7 @@ python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_de
 | 2 | LEDPO基础框架建立 | 0c8aa146 | 2025-03-18 |
 | 3 | 基于最后提示词Token的动态beta实现 | fd369dac | 2025-03-19 |
 | 4 | 改进动态beta值监控系统 | 57bc56e5 | 2025-03-20 |
-| 5 | 动态beta理论改进与实验验证 | b47a59ec | 2025-03-23 |
+| 5 | 动态beta理论改进与实验验证 | ec6b82c1 | 2025-03-23 |
 
 如需回退到特定保存点，请使用以下命令：
 ```bash

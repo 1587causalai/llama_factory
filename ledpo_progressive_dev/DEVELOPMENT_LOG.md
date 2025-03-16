@@ -205,7 +205,7 @@ git checkout 57bc56e5
 
 **回退方法:**
 ```bash
-git checkout b47a59ec
+git checkout ec6b82c1
 ```
 
 ## 下一阶段计划：阶段6 (计划中)
