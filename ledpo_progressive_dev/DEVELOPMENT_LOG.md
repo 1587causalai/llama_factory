@@ -2,6 +2,16 @@
 
 本文档记录 LeDPO (可学习Beta DPO) 算法的渐进式开发过程，包括每个阶段的工作内容、决策和结果。
 
+## 开发阶段概览
+
+| 阶段 | 描述 | 状态 | 对应保存点 |
+|------|------|------|------------|
+| 1    | 标准DPO基准测试 | 已完成 | 保存点1 |
+| 2    | LEDPO基础框架建立 | 已完成 | 保存点2 |
+| 3    | 基于最后提示词Token的动态beta实现 | 已完成 | 保存点3 |
+| 4    | 改进动态beta值监控系统 | 已完成 | 保存点4 |
+| 5    | 将动态beta应用到损失计算中 | 计划中 | - |
+
 ## 阶段1：标准DPO基准测试 (2025-03-16)
 
 ### 目标
@@ -24,61 +34,21 @@
    - 针对本地环境（使用 Qwen1.5-0.5B 模型）优化了配置参数
    - 使用 `dpo_en_demo` 作为训练数据集
 
-4. **存档当前进展**
-   - 使用 Git 提交所有更改，创建第一个开发存档点
-   - 提交信息："阶段1: 创建基本FooDPO实现作为渐进式开发的第一步"
-   - 提交 ID: 4cd13c1800bfe2b82a98faf206a5fdfad11af655
-
-### 下一步计划
-准备进入阶段2：最小化LEDPO实现。将在现有的FooDPO基础上添加：
-1. 简单的ValueHead网络来学习beta值
-2. 修改loss计算，引入动态beta
-3. 添加必要的监控代码来跟踪beta值的变化
+4. **实现训练指标监控系统**
+   - 创建了 `plot_ledpo_metrics.py` 绘图脚本，直接从`trainer_state.json`读取并可视化训练数据
+   - 创建了 `run_train_and_plot.py` 集成脚本，一键完成训练和绘图
+   - 设计了包含6个关键指标的监控系统：accuracy、loss、reward/margin、reward/chosen、reward/rejected、beta
+   - 为后续LEDPO开发预留了特定指标支持：pos_beta和neg_beta
 
 ### 运行命令
 ```bash
 llamafactory-cli train ledpo_progressive_dev/qwen15_lora_foodpo.yaml
+# 或使用集成脚本
+python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 ```
 
-### 注意事项
-- 当前实现仍然是标准DPO，只是重命名为FooDPO，作为后续开发的基础
-- 确保所有的变更都遵循渐进式开发的原则：可控、可测试、简洁、有记录、可回退 
-
-## 训练指标监控实现
-
-为了更好地监控LEDPO算法的训练过程，我们创建了一个专门的绘图脚本，用于可视化训练过程中的关键指标。
-
-### 关键指标
-
-根据项目需求，我们特别关注以下6个指标，并按此顺序显示：
-
-1. **accuracy** (rewards/accuracies)
-2. **loss**
-3. **reward/margin** (rewards/margins)
-4. **reward/chosen** (rewards/chosen)
-5. **reward/rejected** (rewards/rejected)
-6. **beta** (beta参数)
-
-### 新增LEDPO特定指标支持
-
-为了准备LEDPO算法的实现，我们扩展了绘图脚本，增加了对以下新指标的支持：
-
-1. **pos_beta** - 正样本的beta值
-2. **neg_beta** - 负样本的beta值
-
-这些指标对于LEDPO的开发至关重要，因为它们直接反映了算法学习beta值的效果：
-
-- pos_beta值应该较高，表明模型对正样本的高置信度
-- neg_beta值应该较低，表明模型对负样本的低置信度
-- 两者之间的差距越大，表明模型区分能力越强
-
-通过在同一图表中显示这两个值的变化趋势，我们可以直观地监控LEDPO算法的学习效果。这些改动采用了最小化原则，只在必要的地方添加了新指标的支持，保持了原有功能的完整性。
-
-## 保存点记录与回退策略
-
-为了确保每一步开发都可控、可回退，我们设立了一系列保存点。以下是当前的保存点记录及回退方法：
-
 ### 保存点1: 训练指标监控系统实现 (350d9c9f)
+**创建时间:** 2025-03-17
 
 **内容:** 
 - 实现了标准DPO训练的指标监控系统
@@ -87,82 +57,61 @@ llamafactory-cli train ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 
 **回退方法:**
 ```bash
-# 回退到该保存点
 git checkout 350d9c9f
-
-# 如果需要在该点上创建新分支
+# 或创建新分支
 git checkout -b new_branch_name 350d9c9f
 ```
 
-若在后续开发中遇到无法解决的问题，可随时回退到该保存点，确保系统的基础功能可用。
+## 阶段2：LEDPO基础框架建立 (2025-03-18)
 
-### 实现方案
+### 目标
+在标准DPO基础上建立LEDPO的基础架构，实现最小化的动态beta功能。
 
-我们采用了最小改动原则，创建了两个独立的Python脚本：
+### 完成工作
+1. **添加动态beta支持**
+   - 在 `finetuning_args.py` 中添加了 `use_dynamic_beta` 参数
+   - 创建了 `beta_head.py` 实现基于长度的beta计算模型
+   - 在 `trainer.py` 中添加了动态beta的基础代码结构和初始化
 
-1. **plot_ledpo_metrics.py**：
-   - 直接从`trainer_state.json`中读取训练和评估数据
-   - 在同一张图上绘制train和eval数据，使用不同的线条区分
-   - 按照指定的顺序排列6个关键指标
-   - 生成高质量的可视化图表，便于分析模型训练效果
+2. **实现基础beta计算逻辑**
+   - 实现了基于提示长度计算beta值的基础逻辑
+   - 添加了beta值的监控和指标记录支持
 
-2. **run_train_and_plot.py**：
-   - 集成训练和绘图为一体的工作流
-   - 先运行标准训练过程
-   - 训练完成后自动调用绘图脚本生成指标图表
-   - 支持命令行参数自定义配置
-
-这种方案的优点：
-- 不修改LlamaFactory的任何源代码
-- 不使用侵入式的回调机制
-- 完全独立的后处理方案，更加稳定可靠
-- 可以随时应用于已完成的训练结果
-- 便于在不同实验间进行指标对比
-
-### 使用方法
-
-训练完成后，可以使用以下命令生成指标图表：
-
-```bash
-python ledpo_progressive_dev/plot_ledpo_metrics.py --result_dir results/qwen15-0.5b/lora/foodpo
-```
-
-或者使用集成脚本一键完成训练和绘图：
-
-```bash
-python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
-```
-
-生成的图表保存在训练输出目录的`ledpo_plots`子目录中。
-
-### 保存点2: LEDPO 基础框架建立 (0c8aa146a93a0b744659e37c55c42ccdee4c33a4)
+### 保存点2: LEDPO 基础框架建立 (0c8aa146)
+**创建时间:** 2025-03-18
 
 **内容:**
 - 在 `finetuning_args.py` 中添加了 `use_dynamic_beta` 参数
-- 创建了 `beta_head.py` 实现基于长度的 beta 计算模型
-- 在 `trainer.py` 中添加了动态 beta 的基础代码结构和初始化
-- 实现了基于提示长度计算 beta 值的基础逻辑
+- 创建了 `beta_head.py` 实现基于长度的beta计算模型
+- 在 `trainer.py` 中添加了动态beta的基础代码结构和初始化
+- 实现了基于提示长度计算beta值的基础逻辑
 
 **状态说明:**
-- 当前版本中动态 beta 调整的逻辑尚未在训练过程中实际生效
-- 已添加 beta 值的监控和指标记录支持
+- 当前版本中动态beta调整的逻辑尚未在训练过程中实际生效
+- 已添加beta值的监控和指标记录支持
 - 删除了临时测试文件（qwen15_lora_ledpo_v1.yaml 和 run_ledpo_v1.sh）
 
 **回退方法:**
 ```bash
-# 回退到该保存点
 git checkout 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
-
-# 如果需要在该点上创建新分支
-git checkout -b new_branch_name 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
 ```
 
-**下一步计划:**
-1. 激活 `compute_preference_loss` 中的动态 beta 实际计算逻辑
-2. 实现和记录 `pos_beta` 和 `neg_beta` 值
-3. 添加对比实验配置，对照验证动态 beta 的效果 
+## 阶段3：基于最后提示词Token的动态beta实现 (2025-03-19)
+
+### 目标
+改进beta计算方法，基于提示的最后一个token的隐藏状态计算更精确的beta值。
+
+### 完成工作
+1. **改进beta计算模型**
+   - 创建了 `HiddenStateBetaHead` 类，基于隐藏状态计算beta值
+   - 替换原有的基于长度的beta计算模型
+
+2. **实现隐藏状态提取**
+   - 更新了 `concatenated_forward` 方法，实现从模型输出中提取隐藏状态
+   - 添加了提取提示最后一个token位置的代码，并用它来获取对应的隐藏状态
 
 ### 保存点3: 基于最后提示词Token的动态beta实现 (fd369dac)
+**创建时间:** 2025-03-19
 
 **内容:**
 - 创建了 `HiddenStateBetaHead` 类，用于基于提示的最后一个token的隐藏状态计算beta值
@@ -178,20 +127,25 @@ git checkout -b new_branch_name 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
 
 **回退方法:**
 ```bash
-# 回退到该保存点
 git checkout fd369dac
-
-# 如果需要在该点上创建新分支
-git checkout -b new_branch_name fd369dac
 ```
 
-**下一步计划:**
-1. 修改损失计算函数，将动态beta值应用到DPO损失计算中
-2. 添加更详细的beta值监控指标
-3. 针对不同的训练数据集评估动态beta的效果
-4. 探索beta值与样本特征之间的关系 
+## 阶段4：改进动态beta值监控系统 (2025-03-20)
+
+### 目标
+完善动态beta值的监控和可视化系统，为下一阶段应用动态beta做准备。
+
+### 完成工作
+1. **优化beta指标计算**
+   - 修改`trainer.py`中beta相关指标的命名格式
+   - 根据delta值的正负对样本进行分类，分别计算pos_beta和neg_beta
+
+2. **改进绘图脚本**
+   - 优化`plot_ledpo_metrics.py`，从日志中获取实际的动态beta值
+   - 修复指标名称格式，确保图表能正确显示beta值变化
 
 ### 保存点4: 改进动态beta值监控系统 (57bc56e5)
+**创建时间:** 2025-03-20
 
 **内容:**
 - 修改`trainer.py`中beta相关指标的命名格式，将`beta/pos`改为`pos_beta`，将`beta/neg`改为`neg_beta`
@@ -206,14 +160,14 @@ git checkout -b new_branch_name fd369dac
 
 **回退方法:**
 ```bash
-# 回退到该保存点
 git checkout 57bc56e5
-
-# 如果需要在该点上创建新分支
-git checkout -b new_branch_name 57bc56e5
 ```
 
-**下一步计划:**
+## 下一阶段计划：阶段5 (计划中)
+
+在前四个阶段的基础上，我们已经完成了动态beta计算和监控系统的建设。下一步将进入核心阶段：将动态beta值真正应用到损失计算中。
+
+### 具体计划:
 1. 修改`compute_preference_loss`函数，将动态beta值应用到实际损失计算中
 2. 实现不同损失函数(如DPO、ORPO、SimPO)下的动态beta应用方案
 3. 对比实验验证动态beta的效果
