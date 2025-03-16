@@ -135,7 +135,7 @@ python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_de
 
 生成的图表保存在训练输出目录的`ledpo_plots`子目录中。
 
-### 保存点2: LEDPO 基础框架建立 (当前提交)
+### 保存点2: LEDPO 基础框架建立 (0c8aa146a93a0b744659e37c55c42ccdee4c33a4)
 
 **内容:**
 - 在 `finetuning_args.py` 中添加了 `use_dynamic_beta` 参数
@@ -151,10 +151,10 @@ python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_de
 **回退方法:**
 ```bash
 # 回退到该保存点
-git checkout <当前提交ID>
+git checkout 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
 
 # 如果需要在该点上创建新分支
-git checkout -b new_branch_name <当前提交ID>
+git checkout -b new_branch_name 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
 ```
 
 **下一步计划:**
