@@ -387,7 +387,7 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to train model in purely bf16 precision (without AMP)."},
     )
-    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto"] = field(
+    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "kto", "foodpo"] = field(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
@@ -446,6 +446,9 @@ class FinetuningArguments(
         self.galore_target: list[str] = split_arg(self.galore_target)
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+        # 如果stage是foodpo, 需要初始化是否使用ref_model
+        if self.stage == "foodpo":
+            self.use_ref_model = False if self.pref_loss in ["orpo", "simpo"] else True
 
         assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
