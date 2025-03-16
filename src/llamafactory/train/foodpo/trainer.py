@@ -257,7 +257,7 @@ class CustomFooDPOTrainer(DPOTrainer):
         if self.finetuning_args.use_ref_model:
             batch = nested_detach(batch, clone=True)  # avoid error
 
-        # 获取模型输出，包括logits和last_hidden_state, 如果use_dynamic_beta为True，则输出outputs_hidden_states
+        # 获取模型输出，包括logits和last_hidden_state, 如果use_dynamic_beta为True，则额外输出outputs_hidden_states
         model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=self.use_dynamic_beta)
         all_logits: torch.Tensor = model_outputs.logits.to(torch.float32)
         
@@ -272,6 +272,9 @@ class CustomFooDPOTrainer(DPOTrainer):
         chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
         chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
         chosen_length, _ = valid_length.split(batch_size, dim=0)
+        
+        # 计算delta值(偏好差异)
+        self.current_delta_values = chosen_logps - rejected_logps
         
         # 如果使用动态beta，计算beta值
         if self.use_dynamic_beta and last_hidden_states is not None:
@@ -292,10 +295,22 @@ class CustomFooDPOTrainer(DPOTrainer):
                 
                 # 使用beta_head计算动态beta值
                 self.current_beta_values = self.beta_head(chosen_prompt_last_token_hidden)
+                
+                # 根据delta值划分pos_beta和neg_beta
+                pos_mask = self.current_delta_values > 0  # Δ > 0的样本掩码
+                neg_mask = ~pos_mask  # Δ <= 0的样本掩码
+                
+                # 获取pos_beta和neg_beta
+                self.current_pos_beta = self.current_beta_values[pos_mask] if pos_mask.any() else None
+                self.current_neg_beta = self.current_beta_values[neg_mask] if neg_mask.any() else None
             else:
                 self.current_beta_values = None
+                self.current_pos_beta = None
+                self.current_neg_beta = None
         else:
             self.current_beta_values = None
+            self.current_pos_beta = None
+            self.current_neg_beta = None
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
@@ -360,11 +375,19 @@ class CustomFooDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
         
-        # 添加 beta 相关指标
+        # 添加 delta 和 beta 相关指标
+        if hasattr(self, "current_delta_values") and self.current_delta_values is not None:
+            metrics[f"{prefix}delta/mean"] = self.current_delta_values.mean().item()
+        
         if self.use_dynamic_beta and hasattr(self, "current_beta_values") and self.current_beta_values is not None:
             metrics[f"{prefix}beta/mean"] = self.current_beta_values.mean().item()
-            metrics[f"{prefix}beta/min"] = self.current_beta_values.min().item()
-            metrics[f"{prefix}beta/max"] = self.current_beta_values.max().item()
+            
+            # 添加pos_beta和neg_beta指标
+            if hasattr(self, "current_pos_beta") and self.current_pos_beta is not None:
+                metrics[f"{prefix}pos_beta"] = self.current_pos_beta.mean().item()
+            
+            if hasattr(self, "current_neg_beta") and self.current_neg_beta is not None:
+                metrics[f"{prefix}neg_beta"] = self.current_neg_beta.mean().item()
             
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()

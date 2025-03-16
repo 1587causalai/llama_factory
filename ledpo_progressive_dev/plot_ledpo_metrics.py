@@ -54,15 +54,15 @@ def extract_metrics_from_state(state_data):
     train_data = []
     eval_data = []
     
-    # 提取beta值
-    beta_value = 0.1  # 默认值，来自配置文件
-    
     # 遍历日志历史
     for entry in state_data["log_history"]:
         # 检查是训练还是评估指标
         if "eval_" in str(entry.keys()):
             # 这是评估指标
             if "step" in entry:
+                # 获取动态beta值，如果不存在则使用默认值0.1
+                beta_value = entry.get("eval_beta/mean", 0.1)
+                
                 eval_entry = {
                     "step": entry["step"],
                     "eval_rewards/accuracies": entry.get("eval_rewards/accuracies", None),
@@ -70,13 +70,16 @@ def extract_metrics_from_state(state_data):
                     "eval_rewards/margins": entry.get("eval_rewards/margins", None),
                     "eval_rewards/chosen": entry.get("eval_rewards/chosen", None),
                     "eval_rewards/rejected": entry.get("eval_rewards/rejected", None),
-                    "eval_beta": beta_value,  # 使用固定的beta值
+                    "eval_beta": beta_value,  # 使用日志中的动态beta值
                     "eval_pos_beta": entry.get("eval_pos_beta", None),  # 新增：正样本beta
                     "eval_neg_beta": entry.get("eval_neg_beta", None)   # 新增：负样本beta
                 }
                 eval_data.append(eval_entry)
         elif "step" in entry and "train_loss" not in entry:
             # 这是训练指标
+            # 获取动态beta值，如果不存在则使用默认值0.1
+            beta_value = entry.get("beta/mean", 0.1)
+            
             train_entry = {
                 "step": entry["step"],
                 "rewards/accuracies": entry.get("rewards/accuracies", None),
@@ -84,7 +87,7 @@ def extract_metrics_from_state(state_data):
                 "rewards/margins": entry.get("rewards/margins", None),
                 "rewards/chosen": entry.get("rewards/chosen", None),
                 "rewards/rejected": entry.get("rewards/rejected", None),
-                "beta": beta_value,  # 使用固定的beta值
+                "beta": beta_value,  # 使用日志中的动态beta值
                 "pos_beta": entry.get("pos_beta", None),  # 新增：正样本beta
                 "neg_beta": entry.get("neg_beta", None)   # 新增：负样本beta
             }
