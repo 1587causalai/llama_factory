@@ -130,6 +130,10 @@ class RLHFArguments:
         default=0.1,
         metadata={"help": "The beta parameter in the preference loss."},
     )
+    use_dynamic_beta: bool = field(
+        default=False,
+        metadata={"help": "Whether to use dynamic beta."},
+    )
     pref_ftx: float = field(
         default=0.0,
         metadata={"help": "The supervised fine-tuning loss coefficient in DPO training."},

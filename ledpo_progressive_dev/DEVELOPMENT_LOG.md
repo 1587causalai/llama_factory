@@ -133,4 +133,31 @@ python ledpo_progressive_dev/plot_ledpo_metrics.py --result_dir results/qwen15-0
 python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 ```
 
-生成的图表保存在训练输出目录的`ledpo_plots`子目录中。 
+生成的图表保存在训练输出目录的`ledpo_plots`子目录中。
+
+### 保存点2: LEDPO 基础框架建立 (当前提交)
+
+**内容:**
+- 在 `finetuning_args.py` 中添加了 `use_dynamic_beta` 参数
+- 创建了 `beta_head.py` 实现基于长度的 beta 计算模型
+- 在 `trainer.py` 中添加了动态 beta 的基础代码结构和初始化
+- 实现了基于提示长度计算 beta 值的基础逻辑
+
+**状态说明:**
+- 当前版本中动态 beta 调整的逻辑尚未在训练过程中实际生效
+- 已添加 beta 值的监控和指标记录支持
+- 删除了临时测试文件（qwen15_lora_ledpo_v1.yaml 和 run_ledpo_v1.sh）
+
+**回退方法:**
+```bash
+# 回退到该保存点
+git checkout <当前提交ID>
+
+# 如果需要在该点上创建新分支
+git checkout -b new_branch_name <当前提交ID>
+```
+
+**下一步计划:**
+1. 激活 `compute_preference_loss` 中的动态 beta 实际计算逻辑
+2. 实现和记录 `pos_beta` 和 `neg_beta` 值
+3. 添加对比实验配置，对照验证动态 beta 的效果 
