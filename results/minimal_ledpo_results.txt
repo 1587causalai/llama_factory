@@ -1,0 +1,11 @@
+===== 不冻结策略模型 =====
+最终beta_scale = 9.8997
+最终pos_beta = 4.2093
+最终neg_beta = 1.5779
+最终pos_beta/neg_beta比值 = 2.6677
+
+===== 冻结策略模型 =====
+最终beta_scale = 9.9090
+最终pos_beta = 3.8895
+最终neg_beta = 1.5878
+最终pos_beta/neg_beta比值 = 2.4497

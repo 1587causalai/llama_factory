@@ -1,0 +1,44 @@
+# LEDPO不同变体实验结果
+
+## Basic-UnfrozenPolicy
+最终beta_scale = 9.8909
+最终beta平均值 = 2.7143
+最终pos_beta = 3.6123
+最终neg_beta = 1.3673
+最终pos_beta/neg_beta比值 = 2.6418
+
+## Basic-FrozenPolicy
+最终beta_scale = 9.9046
+最终beta平均值 = 2.6092
+最终pos_beta = 3.4643
+最终neg_beta = 1.3265
+最终pos_beta/neg_beta比值 = 2.6116
+
+## Softplus-FrozenPolicy
+最终beta_scale = 9.8814
+最终beta平均值 = 2.8379
+最终pos_beta = 3.7169
+最终neg_beta = 1.5195
+最终pos_beta/neg_beta比值 = 2.4461
+
+## Regularized-FrozenPolicy
+最终beta_scale = 9.9072
+最终beta平均值 = 2.1866
+最终pos_beta = 2.9142
+最终neg_beta = 1.0953
+最终pos_beta/neg_beta比值 = 2.6607
+
+## Softplus+Reg-FrozenPolicy
+最终beta_scale = 9.9008
+最终beta平均值 = 2.5780
+最终pos_beta = 3.4598
+最终neg_beta = 1.2553
+最终pos_beta/neg_beta比值 = 2.7562
+
+## DeltaAware-FrozenPolicy
+最终beta_scale = 0.6770
+最终beta平均值 = 0.6240
+最终pos_beta = 0.6221
+最终neg_beta = 0.6270
+最终pos_beta/neg_beta比值 = 0.9922
+
