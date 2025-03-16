@@ -85,6 +85,20 @@ class CustomFooDPOTrainer(DPOTrainer):
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
 
+        # dynamic beta
+        self.use_dynamic_beta = getattr(finetuning_args, "use_dynamic_beta", False)
+        
+        if self.use_dynamic_beta:
+            from .beta_head import HiddenStateBetaHead
+            self.current_batch = None
+            self.current_beta_values = None
+
+            self.beta_head = HiddenStateBetaHead(
+                hidden_size=model.config.hidden_size,
+                beta_base=self.beta
+            )
+            
+
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
@@ -110,6 +124,43 @@ class CustomFooDPOTrainer(DPOTrainer):
 
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
+            
+        if self.use_dynamic_beta:
+            self.beta_head = self.beta_head.to(self.accelerator.device)
+            
+    def get_prompt_lengths(self, batch: dict[str, "torch.Tensor"]) -> torch.Tensor:
+        """
+        计算batch中每个样本的prompt长度
+        
+        在DPO/LEDPO训练中，batch包含成对的样本(chosen和rejected)
+        标签中IGNORE_INDEX表示prompt部分
+        
+        返回: [batch_size//2] 形状的张量，只包含chosen样本的prompt长度
+        """
+        # DPO/LEDPO batch中结构: [chosen_1, ..., chosen_n, rejected_1, ..., rejected_n]
+        # 为了正确找到prompt长度，我们只需要处理chosen部分
+        
+        # 获取batch总大小并计算单侧大小(chosen或rejected部分)
+        total_batch_size = batch["input_ids"].size(0)
+        batch_size = total_batch_size // 2  # 每侧的样本数
+        
+        # 只获取chosen部分
+        chosen_labels = batch["labels"][:batch_size]  # [batch_size, seq_len]
+        chosen_input_ids = batch["input_ids"][:batch_size]  # [batch_size, seq_len]
+        
+        # 创建prompt掩码: True表示prompt部分
+        prompt_mask = (chosen_labels == IGNORE_INDEX)  # [batch_size, seq_len]
+        
+        # 排除padding位置 (padding token通常是0)
+        valid_tokens_mask = (chosen_input_ids != self.padding_value) & prompt_mask
+        
+        # 计算每个序列中有效prompt token的数量
+        prompt_lengths = valid_tokens_mask.sum(dim=1)
+        
+        # 确保长度至少为1 (避免边缘情况)
+        prompt_lengths = torch.maximum(prompt_lengths, torch.ones_like(prompt_lengths))
+        
+        return prompt_lengths
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
@@ -136,22 +187,38 @@ class CustomFooDPOTrainer(DPOTrainer):
         r"""Replace the method of DPO Trainer with the one of the standard Trainer."""
         return Trainer.get_batch_samples(self, epoch_iterator, num_batches)
 
-    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def odds_ratio_loss(
+        self, 
+        chosen_logps: "torch.Tensor", 
+        rejected_logps: "torch.Tensor",
+        beta_values: Optional["torch.Tensor"] = None
+    ) -> "torch.Tensor":
         r"""Compute ORPO's odds ratio (OR) loss for batched log probabilities of the policy model."""
         log_odds = (chosen_logps - rejected_logps) - (
             torch.log1p(-torch.exp(chosen_logps)) - torch.log1p(-torch.exp(rejected_logps))
         )
         sft_loss = -chosen_logps
         odds_ratio_loss = -F.logsigmoid(log_odds)
-        orpo_loss = sft_loss + self.beta * odds_ratio_loss
+        
+        # 使用动态 beta 或固定 beta
+        beta = beta_values if beta_values is not None else self.beta
+        orpo_loss = sft_loss + beta * odds_ratio_loss
         return orpo_loss
 
-    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def simpo_loss(
+        self, 
+        chosen_logps: "torch.Tensor", 
+        rejected_logps: "torch.Tensor",
+        beta_values: Optional["torch.Tensor"] = None
+    ) -> "torch.Tensor":
         r"""Compute SimPO loss for batched log probabilities of the policy model."""
         pi_logratios = chosen_logps - rejected_logps
-        gamma_logratios = self.simpo_gamma / self.beta
+        
+        # 使用动态 beta 或固定 beta
+        beta = beta_values if beta_values is not None else self.beta
+        gamma_logratios = self.simpo_gamma / beta
         logits = pi_logratios - gamma_logratios
-        simpo_loss = -F.logsigmoid(self.beta * logits)
+        simpo_loss = -F.logsigmoid(beta * logits)
         return simpo_loss
 
     def compute_preference_loss(
@@ -190,7 +257,13 @@ class CustomFooDPOTrainer(DPOTrainer):
         if self.finetuning_args.use_ref_model:
             batch = nested_detach(batch, clone=True)  # avoid error
 
-        all_logits: torch.Tensor = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
+        # 获取模型输出，包括logits和last_hidden_state, 如果use_dynamic_beta为True，则输出outputs_hidden_states
+        model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=self.use_dynamic_beta)
+        all_logits: torch.Tensor = model_outputs.logits.to(torch.float32)
+        
+        # 获取last_hidden_state用于动态beta计算
+        last_hidden_states = model_outputs.hidden_states[-1] if self.use_dynamic_beta else None
+        
         all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             all_logps = all_logps / valid_length
@@ -199,6 +272,30 @@ class CustomFooDPOTrainer(DPOTrainer):
         chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
         chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
         chosen_length, _ = valid_length.split(batch_size, dim=0)
+        
+        # 如果使用动态beta，计算beta值
+        if self.use_dynamic_beta and last_hidden_states is not None:
+            chosen_hidden, rejected_hidden = last_hidden_states.split(batch_size, dim=0)
+            
+            # 使用get_prompt_lengths获取prompt长度
+            prompt_lengths = self.get_prompt_lengths(batch)  # 这个函数已修改为只返回chosen部分
+            
+            if prompt_lengths.shape[0] > 0:  # 确保不是空batch
+                # 创建批次索引 [0, 1, 2, ..., batch_size-1]
+                batch_indices = torch.arange(batch_size, device=chosen_hidden.device)
+                
+                # 由于Python索引从0开始，将长度减1获取索引位置
+                prompt_indices = (prompt_lengths - 1).clamp(0, chosen_hidden.size(1) - 1)
+                
+                # 使用批次索引和提示长度索引获取提示的最后一个token的hidden state
+                chosen_prompt_last_token_hidden = chosen_hidden[batch_indices, prompt_indices]
+                
+                # 使用beta_head计算动态beta值
+                self.current_beta_values = self.beta_head(chosen_prompt_last_token_hidden)
+            else:
+                self.current_beta_values = None
+        else:
+            self.current_beta_values = None
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
@@ -262,6 +359,13 @@ class CustomFooDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
         metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
+        
+        # 添加 beta 相关指标
+        if self.use_dynamic_beta and hasattr(self, "current_beta_values") and self.current_beta_values is not None:
+            metrics[f"{prefix}beta/mean"] = self.current_beta_values.mean().item()
+            metrics[f"{prefix}beta/min"] = self.current_beta_values.min().item()
+            metrics[f"{prefix}beta/max"] = self.current_beta_values.max().item()
+            
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()

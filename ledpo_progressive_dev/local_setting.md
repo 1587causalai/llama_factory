@@ -12,7 +12,7 @@ Qwen1.5-0.5B                   backup                  internlm-xcomposer2-vl-7b
 Qwen1.5-0.5B-Chat              baicai003               internlm2-chat-7b          speech_sambert-hifigan_tts_zhiyan_emo_zh-cn_16k
 Qwen2.5-1.5B-Instruct          bce-embedding-base_v1   internlm2_5-1_8b-chat      tclf90
 ```
-请优先选择 Qwen1.5-0.5B 进行测试. 
+请优先选择 Qwen1.5-0.5B 等小模型进行实验. 
 
 本地数据目录: data/ 
 ```bash
@@ -21,6 +21,9 @@ README.md            alpaca_zh_demo.json  dataset_info.json  glaive_toolcall_en_
 README_zh.md         belle_multiturn      dpo_en_demo.json   glaive_toolcall_zh_demo.json  kto_en_demo.json      mllm_demo_data        wiki_demo.txt
 alpaca_en_demo.json  c4_demo.json         dpo_zh_demo.json   hh_rlhf_en 
 ```
-请有限选择 dpo_en_demo.json 进行测试. 
+请优先选择 dpo_en_demo.json 进行训练, 选择 alpaca_zh_demo.json 进行评估. 
+
+基本训练配置文件: ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 
 实验结果目录: results/
+

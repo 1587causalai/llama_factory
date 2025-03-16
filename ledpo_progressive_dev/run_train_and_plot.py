@@ -3,6 +3,9 @@
 """
 完全干净版本：运行标准训练，然后使用绘图脚本生成监控图表
 支持标准DPO指标以及LEDPO特定指标(pos_beta, neg_beta)的监控
+
+使用方法:
+    python run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_monitoring
 """
 
 import os
