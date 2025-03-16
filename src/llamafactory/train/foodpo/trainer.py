@@ -21,6 +21,7 @@ from contextlib import nullcontext
 from types import MethodType
 from typing import TYPE_CHECKING, Literal, Optional, Union
 
+from fastapi import logger
 import torch
 import torch.nn.functional as F
 from transformers import Trainer
@@ -128,6 +129,54 @@ class CustomFooDPOTrainer(DPOTrainer):
         if self.use_dynamic_beta:
             self.beta_head = self.beta_head.to(self.accelerator.device)
             
+            # 冻结策略模型参数但保持beta_head可训练
+            print("\n[FREEZE] 冻结策略模型参数，只训练beta_head...")
+            for param in self.model.parameters():
+                param.requires_grad = False
+                
+            # 确保beta_head参数可训练
+            for param in self.beta_head.parameters():
+                param.requires_grad = True
+                
+            # 测试梯度流动
+            self.test_grad_flow()
+            
+    def test_grad_flow(self):
+        """测试beta_head梯度流动是否正常"""
+        if not hasattr(self, "beta_head") or not self.use_dynamic_beta:
+            return
+            
+        print("\n[GRAD-TEST] 开始测试beta_head梯度流...")
+        
+        # 1. 创建随机输入
+        batch_size = 4
+        hidden_size = self.model.config.hidden_size
+        fake_hidden = torch.randn(batch_size, hidden_size, device=self.accelerator.device, requires_grad=True)
+        
+        # 2. 计算beta值
+        beta_values = self.beta_head(fake_hidden)
+        print(f"[GRAD-TEST] 计算的beta值: {beta_values}")
+        
+        # 3. 创建假损失并反向传播
+        fake_loss = beta_values.mean()
+        fake_loss.backward()
+        
+        # 4. 检查beta_head参数是否收到梯度
+        has_grad = False
+        for name, param in self.beta_head.named_parameters():
+            if param.grad is not None and param.grad.norm() > 0:
+                has_grad = True
+                print(f"[GRAD-TEST] 参数 {name} 收到梯度: norm={param.grad.norm().item()}")
+            else:
+                print(f"[GRAD-TEST] 参数 {name} 没有收到梯度!")
+        
+        print(f"[GRAD-TEST] 梯度流动测试结果: {'成功' if has_grad else '失败'}")
+        
+        # 5. 清理梯度
+        for param in self.beta_head.parameters():
+            if param.grad is not None:
+                param.grad.zero_()
+
     def get_prompt_lengths(self, batch: dict[str, "torch.Tensor"]) -> torch.Tensor:
         """
         计算batch中每个样本的prompt长度
@@ -165,8 +214,49 @@ class CustomFooDPOTrainer(DPOTrainer):
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
+            # 创建基本优化器
             self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
-        return super().create_optimizer()
+
+            if self.optimizer is None:
+                self.optimizer = super().create_optimizer()
+            
+            # 添加beta_head参数到优化器
+            if self.use_dynamic_beta and hasattr(self, "beta_head"):
+                # 确保beta_head在正确设备上
+                if hasattr(self.model, "device"):
+                    self.beta_head = self.beta_head.to(self.model.device)
+                
+                # 获取beta_head参数
+                beta_head_params = list(self.beta_head.parameters())
+                
+                # 打印beta_head参数信息
+                print(f"[DEBUG] BetaHead parameters:")
+                for name, param in self.beta_head.named_parameters():
+                    print(f"[DEBUG]   {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+                
+                # 为beta_head参数设置更高的学习率（例如，是基本学习率的10倍）
+                beta_head_lr = self.args.learning_rate * 10.0
+                
+                # 添加参数组
+                params_config = {
+                    "params": beta_head_params,
+                    "lr": beta_head_lr,  # 使用更高的学习率
+                }
+                
+                # 复制原优化器配置（除了学习率和参数）
+                for k, v in self.optimizer.param_groups[0].items():
+                    if k != "params" and k != "lr":
+                        params_config[k] = v
+                
+                # 添加参数组
+                self.optimizer.add_param_group(params_config)
+                
+                # 打印优化器信息
+                print(f"[DEBUG] Optimizer param groups:")
+                for i, group in enumerate(self.optimizer.param_groups):
+                    print(f"[DEBUG]   Group {i}: {len(group['params'])} parameters, lr={group['lr']}")
+                
+        return self.optimizer
 
     @override
     def create_scheduler(
@@ -221,31 +311,6 @@ class CustomFooDPOTrainer(DPOTrainer):
         simpo_loss = -F.logsigmoid(beta * logits)
         return simpo_loss
 
-    def compute_preference_loss(
-        self,
-        policy_chosen_logps: "torch.Tensor",
-        policy_rejected_logps: "torch.Tensor",
-        reference_chosen_logps: Optional["torch.Tensor"],
-        reference_rejected_logps: Optional["torch.Tensor"],
-    ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
-        r"""Compute loss for preference learning."""
-        if not self.finetuning_args.use_ref_model:
-            if self.loss_type == "orpo":
-                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps)
-            elif self.loss_type == "simpo":
-                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps)
-            else:
-                raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
-
-            chosen_rewards = self.beta * policy_chosen_logps.to(self.accelerator.device).detach()
-            rejected_rewards = self.beta * policy_rejected_logps.to(self.accelerator.device).detach()
-        else:
-            losses, chosen_rewards, rejected_rewards = self.dpo_loss(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps
-            )
-
-        return losses, chosen_rewards, rejected_rewards
-
     @override
     def concatenated_forward(
         self, model: "PreTrainedModel", batch: dict[str, "torch.Tensor"]
@@ -258,7 +323,12 @@ class CustomFooDPOTrainer(DPOTrainer):
             batch = nested_detach(batch, clone=True)  # avoid error
 
         # 获取模型输出，包括logits和last_hidden_state, 如果use_dynamic_beta为True，则额外输出outputs_hidden_states
-        model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=self.use_dynamic_beta)
+        if self.use_dynamic_beta:   
+            # 正常获取模型输出，不要detach以保持梯度流
+            model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=True)
+        else:
+            model_outputs = model(**batch, return_dict=True, use_cache=False)
+
         all_logits: torch.Tensor = model_outputs.logits.to(torch.float32)
         
         # 获取last_hidden_state用于动态beta计算
@@ -272,9 +342,6 @@ class CustomFooDPOTrainer(DPOTrainer):
         chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
         chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
         chosen_length, _ = valid_length.split(batch_size, dim=0)
-        
-        # 计算delta值(偏好差异)
-        self.current_delta_values = chosen_logps - rejected_logps
         
         # 如果使用动态beta，计算beta值
         if self.use_dynamic_beta and last_hidden_states is not None:
@@ -295,22 +362,6 @@ class CustomFooDPOTrainer(DPOTrainer):
                 
                 # 使用beta_head计算动态beta值
                 self.current_beta_values = self.beta_head(chosen_prompt_last_token_hidden)
-                
-                # 根据delta值划分pos_beta和neg_beta
-                pos_mask = self.current_delta_values > 0  # Δ > 0的样本掩码
-                neg_mask = ~pos_mask  # Δ <= 0的样本掩码
-                
-                # 获取pos_beta和neg_beta
-                self.current_pos_beta = self.current_beta_values[pos_mask] if pos_mask.any() else None
-                self.current_neg_beta = self.current_beta_values[neg_mask] if neg_mask.any() else None
-            else:
-                self.current_beta_values = None
-                self.current_pos_beta = None
-                self.current_neg_beta = None
-        else:
-            self.current_beta_values = None
-            self.current_pos_beta = None
-            self.current_neg_beta = None
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
@@ -375,9 +426,12 @@ class CustomFooDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
         
-        # 添加 delta 和 beta 相关指标
+        # 添加 delta 值指标 - 无论是否使用动态beta都记录
         if hasattr(self, "current_delta_values") and self.current_delta_values is not None:
-            metrics[f"{prefix}delta/mean"] = self.current_delta_values.mean().item()
+            metrics[f"{prefix}delta"] = self.current_delta_values.mean().item()
+        
+        # 添加 beta 相关指标
+        beta = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
         
         if self.use_dynamic_beta and hasattr(self, "current_beta_values") and self.current_beta_values is not None:
             metrics[f"{prefix}beta/mean"] = self.current_beta_values.mean().item()
@@ -391,7 +445,7 @@ class CustomFooDPOTrainer(DPOTrainer):
             
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
-            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
+            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
 
         return losses.mean(), metrics
 
@@ -426,3 +480,57 @@ class CustomFooDPOTrainer(DPOTrainer):
                 logs[key] = metric
 
         return Trainer.log(self, logs, *args, **kwargs)
+
+    def compute_preference_loss(
+        self,
+        policy_chosen_logps: "torch.Tensor",
+        policy_rejected_logps: "torch.Tensor",
+        reference_chosen_logps: Optional["torch.Tensor"],
+        reference_rejected_logps: Optional["torch.Tensor"],
+    ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        r"""Compute loss for preference learning."""
+        # 计算完整的delta值，考虑参考模型
+        if not self.finetuning_args.use_ref_model:
+            # 如果不使用参考模型，则简化为policy_chosen_logps - policy_rejected_logps
+            self.current_delta_values = policy_chosen_logps - policy_rejected_logps
+        else:
+            # 按照理论公式计算delta: (π_θ(y_w|x) - π_ref(y_w|x)) - (π_θ(y_l|x) - π_ref(y_l|x))
+            if reference_chosen_logps is not None and reference_rejected_logps is not None:
+                self.current_delta_values = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
+            else:
+                # 如果没有参考模型的logps，则使用简化计算
+                self.current_delta_values = policy_chosen_logps - policy_rejected_logps
+        
+        # 根据delta值划分pos_delta和neg_delta样本
+        if self.current_delta_values is not None:
+            pos_mask = self.current_delta_values > 0  # Δ > 0的样本掩码
+            neg_mask = ~pos_mask  # Δ <= 0的样本掩码
+            
+            if self.use_dynamic_beta and self.current_beta_values is not None:
+                # 获取pos_beta和neg_beta
+                self.current_pos_beta = self.current_beta_values[pos_mask] if pos_mask.any() else None
+                self.current_neg_beta = self.current_beta_values[neg_mask] if neg_mask.any() else None
+        
+        if not self.finetuning_args.use_ref_model:
+            # 使用动态beta值(如果可用)或回退到静态beta
+            beta_values = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
+            
+            if self.loss_type == "orpo":
+                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
+            elif self.loss_type == "simpo":
+                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
+            else:
+                raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
+
+            # 在reward计算中同样使用动态beta
+            chosen_rewards = beta_values * policy_chosen_logps.to(self.accelerator.device).detach()
+            rejected_rewards = beta_values * policy_rejected_logps.to(self.accelerator.device).detach()
+        else: # 如果 use_dynamic_beta 为 True，则暂时性使用 self.current_beta_values 计算损失
+            tmp_beta = self.beta
+            self.beta = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
+            losses, chosen_rewards, rejected_rewards = self.dpo_loss(
+                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps
+            ) # 这个函数使用 self.beta 计算损失
+            self.beta = tmp_beta # 恢复 self.beta 的值
+
+        return losses, chosen_rewards, rejected_rewards

@@ -61,7 +61,7 @@ class HiddenStateBetaHead(nn.Module):
         self, 
         hidden_size: int,  # 模型隐藏状态的维度 
         beta_base: float = 0.1,  # 基准beta值
-        projection_dim: int = 64,  # 投影维度
+        projection_dim: int = 4,  # 投影维度
         min_beta: float = 0.01,  # beta的最小值
         max_beta: float = 100.0,  # beta的最大值
         use_layernorm: bool = False  # 是否使用层标准化

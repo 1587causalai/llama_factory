@@ -1,10 +1,9 @@
-# llamafactory-cli train ledpo_progressive_dev/qwen15_lora_foodpo.yaml
-# python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_demo
+# llamafactory-cli train ledpo_progressive_dev/exp_baseline.yaml
+# python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/exp_baseline.yaml --wandb_project ledpo_exp
 
 ### model
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
-ref_model: /root/models/Qwen1.5-0.5B-Chat
 
 ### method
 stage: foodpo
@@ -34,8 +33,8 @@ resume_from_checkpoint: null
 dataset: dpo_en_demo
 dataset_dir: data
 template: qwen
-cutoff_len: 512  # 对于小模型使用较小的上下文长度
-max_samples: 100
+cutoff_len: 1024  # 对于小模型使用较小的上下文长度
+# max_samples: 100
 overwrite_cache: true
 preprocessing_num_workers: 4
 dataloader_num_workers: 2

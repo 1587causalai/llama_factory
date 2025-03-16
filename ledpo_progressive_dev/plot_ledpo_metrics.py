@@ -24,6 +24,7 @@ PRIORITY_METRICS = [
     "rewards/accuracies",  # accuracy
     "loss",                # loss
     "rewards/margins",     # reward/margin
+    "delta",               # delta值 (新增)
     "rewards/chosen",      # reward/chosen
     "rewards/rejected",    # reward/rejected
     "beta",                # beta值
@@ -36,6 +37,7 @@ METRIC_NAMES = {
     "rewards/accuracies": "Accuracy",
     "loss": "Loss",
     "rewards/margins": "Reward Margin",
+    "delta": "Delta = (π_θ(y_w|x) - π_ref(y_w|x)) - (π_θ(y_l|x) - π_ref(y_l|x))",
     "rewards/chosen": "Reward (Chosen)",
     "rewards/rejected": "Reward (Rejected)",
     "beta": "Beta Parameter",
@@ -63,11 +65,15 @@ def extract_metrics_from_state(state_data):
                 # 获取动态beta值，如果不存在则使用默认值0.1
                 beta_value = entry.get("eval_beta/mean", 0.1)
                 
+                # 直接从日志中获取delta值，而不是手动计算
+                delta_value = entry.get("eval_delta", None)
+                
                 eval_entry = {
                     "step": entry["step"],
                     "eval_rewards/accuracies": entry.get("eval_rewards/accuracies", None),
                     "eval_loss": entry.get("eval_dpo_zh_demo_loss", None),  # 注意特殊的损失名称
                     "eval_rewards/margins": entry.get("eval_rewards/margins", None),
+                    "eval_delta": delta_value,  # 直接使用记录的delta值
                     "eval_rewards/chosen": entry.get("eval_rewards/chosen", None),
                     "eval_rewards/rejected": entry.get("eval_rewards/rejected", None),
                     "eval_beta": beta_value,  # 使用日志中的动态beta值
@@ -80,11 +86,15 @@ def extract_metrics_from_state(state_data):
             # 获取动态beta值，如果不存在则使用默认值0.1
             beta_value = entry.get("beta/mean", 0.1)
             
+            # 直接从日志中获取delta值，而不是手动计算
+            delta_value = entry.get("delta", None)
+            
             train_entry = {
                 "step": entry["step"],
                 "rewards/accuracies": entry.get("rewards/accuracies", None),
                 "loss": entry.get("loss", None),
                 "rewards/margins": entry.get("rewards/margins", None),
+                "delta": delta_value,  # 直接使用记录的delta值
                 "rewards/chosen": entry.get("rewards/chosen", None),
                 "rewards/rejected": entry.get("rewards/rejected", None),
                 "beta": beta_value,  # 使用日志中的动态beta值

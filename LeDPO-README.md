@@ -43,7 +43,7 @@ python ledpo_progressive_dev/plot_ledpo_metrics.py --result_dir results/qwen15-0
 
 ```bash
 # 一键完成训练和绘图
-python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
+python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_progress
 ```
 
 **核心特点:**
@@ -91,54 +91,52 @@ python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_de
 - 图表能够清晰展示beta趋势
 - 分析报告能提供有价值的信息
 
-### 阶段4: 解决beta趋零问题
+### 阶段4: 改进beta值监控系统
 
-**目标:** 彻底解决beta趋零问题，确保LEDPO算法稳定有效
-
-**步骤:**
-1. 实现不同的ValueHead变体
-2. 添加beta正则化项
-3. 优化参数初始化和学习率
-4. 实验不同的freeze策略
-5. 比较不同方案的效果
-
-**验证标准:**
-- beta值保持在合理范围
-- 正delta对应的beta明显大于负delta对应的beta
-- 训练稳定且效果良好
-
-### 阶段5: 性能优化和稳定性测试
-
-**目标:** 优化LEDPO的性能并确保其在不同设置下的稳定性
+**目标:** 完善动态beta值的监控和可视化系统，进一步理解beta变化规律
 
 **步骤:**
-1. 针对较大模型进行优化
-2. 测试不同学习率和批次大小的效果
-3. 实现长时间训练的监控和保护机制
-4. 创建全面的评估脚本
+1. 优化beta相关指标的命名和计算
+2. 添加pos_beta和neg_beta分类指标
+3. 改进绘图脚本，确保正确显示所有指标
+4. 运行实验验证监控系统的有效性
 
 **验证标准:**
-- 训练效率有所提升
-- 算法在不同设置下都能保持稳定
+- 清晰展示beta值的统计特性和分布情况
+- 能够区分不同delta值对应的beta行为
+- 监控系统稳定可靠
+
+### 阶段5: 动态beta理论改进与实验验证
+
+**目标:** 修正delta计算公式并通过模型冻结实验验证beta行为
+
+**步骤:**
+1. 修正delta值计算公式，符合理论定义
+2. 实现策略模型参数冻结功能
+3. 通过梯度测试确保beta_head可训练
+4. 添加详细的delta和beta监控日志
+5. 运行实验验证结果
+
+**验证标准:**
+- delta值计算正确，符合理论公式
+- 在模型冻结情况下beta_head仍能正常训练
+- 能够清晰观察delta与beta值的关系
+
+### 阶段6: 性能优化和广泛实验
+
+**目标:** 深入研究beta值行为并优化模型性能
+
+**步骤:**
+1. 对比冻结与非冻结模型的表现差异
+2. 探索不同学习率对beta_head的影响
+3. 实验更长训练周期下的beta变化
+4. 分析delta和beta之间的理论关系
+
+**验证标准:**
+- 对beta行为有更深入的理解
+- 找到最优的beta_head训练参数
 - 最终模型性能优于标准DPO
 
-## 文件组织
-
-```
-experiments/ledpo/
-├── README.md                # 本文档
-├── configs/                 # 配置文件
-│   ├── dpo_baseline.yaml    # DPO基准配置
-│   ├── ledpo_basic.yaml     # 基本LEDPO配置
-│   └── ledpo_advanced.yaml  # 高级LEDPO配置
-├── scripts/                 # 运行脚本
-│   ├── run_dpo_baseline.sh  # DPO基准运行脚本
-│   ├── run_ledpo_basic.sh   # 基本LEDPO运行脚本
-│   └── analyze_beta.py      # beta分析脚本
-├── logs/                    # 训练日志
-├── outputs/                 # 训练输出
-└── analysis/                # 分析结果
-```
 
 ## 开发原则
 
@@ -154,7 +152,11 @@ experiments/ledpo/
 
 | 保存点ID | 描述 | Git提交号 | 日期 |
 |---------|------|----------|-----|
-| 1 | 训练指标监控系统实现 | 350d9c9f | 当前 |
+| 1 | 训练指标监控系统实现 | 350d9c9f | 2025-03-17 |
+| 2 | LEDPO基础框架建立 | 0c8aa146 | 2025-03-18 |
+| 3 | 基于最后提示词Token的动态beta实现 | fd369dac | 2025-03-19 |
+| 4 | 改进动态beta值监控系统 | 57bc56e5 | 2025-03-20 |
+| 5 | 动态beta理论改进与实验验证 | b47a59ec | 2025-03-23 |
 
 如需回退到特定保存点，请使用以下命令：
 ```bash
@@ -166,9 +168,3 @@ git checkout -b <新分支名> <提交号>
 ```
 
 详细的保存点信息和回退策略请参考`ledpo_progressive_dev/DEVELOPMENT_LOG.md`。
-
-## 下一步行动
-
-1. 运行DPO基准测试
-2. 分析基准测试结果
-3. 开始实现最小化LEDPO功能 

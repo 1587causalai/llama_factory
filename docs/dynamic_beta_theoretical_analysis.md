@@ -2,7 +2,7 @@
 
 ## 故事的开端：从 DPO 到 LearnableBetaDPO
 
-在人工智能领域，尤其是语言模型的优化中，Direct Preference Optimization（DPO）是一种强大的方法，用于让模型根据人类偏好调整输出。传统的 DPO 通过一个精心设计的损失函数，鼓励模型更倾向于生成“优选”输出 \(y_w\)（winning output），而不是“非优选”输出 \(y_l\)（losing output）。其损失函数如下：
+在人工智能领域，尤其是语言模型的优化中，Direct Preference Optimization（DPO）是一种强大的方法，用于让模型根据人类偏好调整输出。传统的 DPO 通过一个精心设计的损失函数，鼓励模型更倾向于生成"优选"输出 \(y_w\)（winning output），而不是"非优选"输出 \(y_l\)（losing output）。其损失函数如下：
 
 \[
 \mathcal{L}_{\text{DPO}}(\theta) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \left[ \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right] \right) \right]
@@ -41,14 +41,14 @@
 
 我们的目标是最小化 \(\mathcal{L}\)，这意味着要最大化 \(\log \sigma (\beta(x) \cdot \Delta)\) 的期望值。接下来，我们一步步分析 \(\beta(x)\) 的动态。
 
-### 当模型“做对了”：\(\Delta > 0\)
+### 当模型"做对了"：\(\Delta > 0\)
 如果 \(\Delta > 0\)，\(\beta(x) \cdot \Delta\) 是正值。此时：
 - \(\beta(x)\) 越大，\(\beta(x) \cdot \Delta\) 越大，\(\sigma(\beta(x) \cdot \Delta)\) 越接近 1。
 - 当 \(\sigma\) 接近 1 时，\(\log \sigma\) 接近 0，损失 \(\mathcal{L}\) 变小。
 
 这意味着，对于模型正确偏好的样本，优化过程会推动 \(\beta(x)\) 变大，以进一步强化这种偏好。
 
-### 当模型“做错了”：\(\Delta < 0\)
+### 当模型"做错了"：\(\Delta < 0\)
 如果 \(\Delta < 0\)，\(\beta(x) \cdot \Delta\) 是负值。此时：
 - \(\beta(x)\) 越大，\(\beta(x) \cdot \Delta\) 越负，\(\sigma(\beta(x) \cdot \Delta)\) 越接近 0。
 - 当 \(\sigma\) 接近 0 时，\(\log \sigma\) 趋向 \(-\infty\)，损失 \(\mathcal{L}\) 变得非常大。
