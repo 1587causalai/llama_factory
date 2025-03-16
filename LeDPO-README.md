@@ -22,10 +22,42 @@ LEDPO (可学习Beta DPO) 是对标准DPO算法的扩展，允许模型自动学
 llamafactory-cli train ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 ```
 
+#### 1.1 监控训练过程
+
+我希望能够监控训练过程, 定制监控指标, 我最关心的指标依次是 accuracy, loss, reward/margin, reward/chosen, reward/rejected, beta. 
+
+对于LEDPO算法，还需要监控以下额外指标：
+- **pos_beta** - 正样本的beta值
+- **neg_beta** - 负样本的beta值
+
+**实现方案:**
+
+为了监控训练过程，我们创建了专门的绘图工具，能够直接从训练输出的`trainer_state.json`文件中提取关键指标并生成可视化图表：
+
+```bash
+# 使用绘图脚本生成监控图表
+python ledpo_progressive_dev/plot_ledpo_metrics.py --result_dir results/qwen15-0.5b/lora/foodpo
+```
+
+或者使用集成脚本一键完成训练和绘图：
+
+```bash
+# 一键完成训练和绘图
+python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
+```
+
+**核心特点:**
+- 在同一张图上展示训练和评估指标，使用不同线型区分
+- 按照指定优先级顺序展示6个关键指标
+- 生成的图表保存在训练输出目录的`ledpo_plots`子目录中
+- 完全独立的后处理方案，不修改LlamaFactory源代码
+- 可随时应用于已完成的训练结果
+
 **验证标准:** 
 - 训练能够正常完成
 - 损失函数正常下降
 - 模型性能有合理提升
+- 能够清晰查看训练过程中各项指标的变化趋势
 
 ### 阶段2: 最小化LEDPO实现
 
