@@ -190,3 +190,32 @@ git checkout -b new_branch_name fd369dac
 2. 添加更详细的beta值监控指标
 3. 针对不同的训练数据集评估动态beta的效果
 4. 探索beta值与样本特征之间的关系 
+
+### 保存点4: 改进动态beta值监控系统 (57bc56e5)
+
+**内容:**
+- 修改`trainer.py`中beta相关指标的命名格式，将`beta/pos`改为`pos_beta`，将`beta/neg`改为`neg_beta`
+- 根据delta值的正负对样本进行分类，分别计算pos_beta和neg_beta
+- 优化`plot_ledpo_metrics.py`绘图脚本，从日志中获取实际的动态beta值，而不是使用固定值
+- 修复绘图脚本中错误的beta值指标名称格式，确保图表能正确显示beta值的变化
+
+**状态说明:**
+- 完善了delta、beta、pos_beta和neg_beta四个核心指标的监控和可视化
+- 可以通过图表清晰观察到动态beta值随训练过程的变化
+- 准备下一阶段将动态beta值应用到实际损失计算中
+
+**回退方法:**
+```bash
+# 回退到该保存点
+git checkout 57bc56e5
+
+# 如果需要在该点上创建新分支
+git checkout -b new_branch_name 57bc56e5
+```
+
+**下一步计划:**
+1. 修改`compute_preference_loss`函数，将动态beta值应用到实际损失计算中
+2. 实现不同损失函数(如DPO、ORPO、SimPO)下的动态beta应用方案
+3. 对比实验验证动态beta的效果
+4. 添加beta值范围限制和正则化策略，防止beta趋零或爆炸
+5. 实现beta值的可视化和分析工具 
