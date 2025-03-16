@@ -47,32 +47,70 @@ class ValueHead(nn.Module):
     简单的value head网络，用于预测每个样本的beta值
     """
     
-    def __init__(self, hidden_size: int, beta_min: float = 0.1, beta_max: float = 100.0):
+    def __init__(self, hidden_size: int, beta_min: float = 0.01, beta_max: float = 100.0):
         super().__init__()
-        self.beta_scale = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        # 初始化beta_scale为10.0，这是一个全局缩放因子，使用更大的初始值
+        self.beta_scale = nn.Parameter(torch.tensor(10.0), requires_grad=True)
+        
+        # 构建更简单的value head网络，减少层数，避免梯度消失
         self.value_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.Sigmoid(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.Sigmoid(),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),  # 使用GELU激活函数代替ReLU
+            nn.Linear(hidden_size // 2, 1),
+            nn.Softplus()  # 确保输出为正值
         )   
+        
+        # 初始化网络权重
         self.value_head.apply(self.init_weights)
+        
+        # 设置beta的最小值和最大值
         self.beta_min = beta_min
         self.beta_max = beta_max
+        
+        # 打印初始化信息
+        print(f"[INFO] ValueHead initialized with beta_scale={self.beta_scale.item():.4f}, beta_min={beta_min}, beta_max={beta_max}")
+        
 
     def init_weights(self, module):
+        """初始化网络权重，使用更大的标准差"""
         if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=0.01)
-            nn.init.zeros_(module.bias)
+            # 使用正态分布初始化权重，均值为0，标准差为0.1（比原来的0.01大）
+            nn.init.normal_(module.weight, mean=0.0, std=0.1)
+            # 将偏置初始化为小正数，而不是0，以避免初始输出过小
+            nn.init.constant_(module.bias, 0.1)
+            
+            # 打印权重初始化信息
+            print(f"[DEBUG] Initialized Linear layer: weight_shape={module.weight.shape}, bias_shape={module.bias.shape}")
+            print(f"[DEBUG] Weight stats: mean={module.weight.mean().item():.4f}, std={module.weight.std().item():.4f}")
+            print(f"[DEBUG] Bias stats: mean={module.bias.mean().item():.4f}, std={module.bias.std().item():.4f}")
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        前向传播函数
+        
+        Args:
+            hidden_states: 最后一层hidden states，形状为[batch_size, hidden_size]
+            
+        Returns:
+            beta值，形状为[batch_size]
+        """
         # 输入是最后一层hidden states
-        beta_raw = self.value_head(hidden_states)
-        beta = nn.functional.softplus(beta_raw)
-        # 使用将输出截断到[beta_min, beta_max]范围
-        scale = torch.clamp(self.beta_scale , min=self.beta_min, max=self.beta_max)
-        return beta * scale
+        raw_beta = self.value_head(hidden_states)
+        
+        # 应用全局缩放因子
+        scaled_beta = self.beta_scale * raw_beta
+        
+        # 将输出截断到[beta_min, beta_max]范围
+        clamped_beta = torch.clamp(scaled_beta, min=self.beta_min, max=self.beta_max)
+        
+        # 打印调试信息
+        if torch.rand(1).item() < 0.05:  # 增加打印概率到5%
+            print(f"[DEBUG] ValueHead forward - raw_beta: min={raw_beta.min().item():.4f}, max={raw_beta.max().item():.4f}, mean={raw_beta.mean().item():.4f}")
+            print(f"[DEBUG] ValueHead forward - beta_scale: {self.beta_scale.item():.4f}")
+            print(f"[DEBUG] ValueHead forward - scaled_beta: min={scaled_beta.min().item():.4f}, max={scaled_beta.max().item():.4f}, mean={scaled_beta.mean().item():.4f}")
+            print(f"[DEBUG] ValueHead forward - clamped_beta: min={clamped_beta.min().item():.4f}, max={clamped_beta.max().item():.4f}, mean={clamped_beta.mean().item():.4f}")
+        
+        return clamped_beta
 
 
 class LEDPOTrainer(DPOTrainer):
@@ -197,30 +235,44 @@ class LEDPOTrainer(DPOTrainer):
             if self.optimizer is None:
                 self.optimizer = super().create_optimizer()
                 
-            # # 冻结策略模型的所有参数
-            # print("正在冻结策略模型参数，只训练beta相关参数...")
-            # for param in self.model.parameters():
-            #     param.requires_grad = False
-                    
             # 添加value_head参数到优化器
             if self.use_dynamic_beta and hasattr(self, "value_head"):
                 # 确保value_head在正确设备上
                 if hasattr(self.model, "device"):
                     self.value_head = self.value_head.to(self.model.device)
                 
-                # 添加value_head参数到优化器
-                params_config = {"params": list(self.value_head.parameters())}
+                # 获取value_head参数
+                value_head_params = list(self.value_head.parameters())
                 
-                # 复制原优化器配置
+                # 打印value_head参数信息
+                print(f"[DEBUG] ValueHead parameters:")
+                for name, param in self.value_head.named_parameters():
+                    print(f"[DEBUG]   {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+                
+                # 为value_head参数设置更高的学习率（例如，是基本学习率的10倍）
+                value_head_lr = self.args.learning_rate * 10.0
+                
+                # 添加参数组
+                params_config = {
+                    "params": value_head_params,
+                    "lr": value_head_lr,  # 使用更高的学习率
+                }
+                
+                # 复制原优化器配置（除了学习率和参数）
                 for k, v in self.optimizer.param_groups[0].items():
-                    if k != "params":
+                    if k != "params" and k != "lr":
                         params_config[k] = v
                 
                 # 添加参数组
                 self.optimizer.add_param_group(params_config)
                 
-                # 简单调试信息
-                print(f"beta_scale已添加到优化器，初始值: {self.value_head.beta_scale.item()}")
+                # 打印优化器信息
+                print(f"[DEBUG] Optimizer param groups:")
+                for i, group in enumerate(self.optimizer.param_groups):
+                    print(f"[DEBUG]   Group {i}: {len(group['params'])} parameters, lr={group['lr']}")
+                
+                print(f"[DEBUG] ValueHead parameters added to optimizer with lr={value_head_lr}")
+                print(f"[DEBUG] beta_scale initial value: {self.value_head.beta_scale.item():.4f}")
 
         return self.optimizer
 
@@ -383,19 +435,17 @@ class LEDPOTrainer(DPOTrainer):
         
         assert dynamic_beta is not None, "dynamic_beta is None"
         
-        # 使用标准方法计算偏好概率
-        # preference_probs = self.compute_preference_probability(
-        #     policy_chosen_logps,
-        #     policy_rejected_logps,
-        #     reference_chosen_logps,
-        #     reference_rejected_logps,
-        #     method="standard"
-        # )
-        
         # 获取偏好概率的logits（log-odds）
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         ref_logratios = reference_chosen_logps - reference_rejected_logps
-        logits = dynamic_beta * (pi_logratios - ref_logratios)
+        delta = pi_logratios - ref_logratios  # 完整的 Delta 值
+        
+        # 应用动态beta - 这是关键部分
+        logits = dynamic_beta * delta
+        
+        # 添加调试信息
+        print(f"[DEBUG] DPO Loss - Delta stats: min={delta.min().item():.4f}, max={delta.max().item():.4f}, mean={delta.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Logits after beta: min={logits.min().item():.4f}, max={logits.max().item():.4f}, mean={logits.mean().item():.4f}")
         
         # 计算交叉熵损失
         if self.label_smoothing > 0:
@@ -406,12 +456,15 @@ class LEDPOTrainer(DPOTrainer):
         else:
             losses = -F.logsigmoid(logits)
         
+        # 计算奖励 - 也应用动态beta
         chosen_rewards = dynamic_beta * (policy_chosen_logps - reference_chosen_logps)
         rejected_rewards = dynamic_beta * (policy_rejected_logps - reference_rejected_logps)
-  
-        # 计算完整的 Delta 值 (论文中的 Δ)
-        delta = pi_logratios - ref_logratios  # 完整的 Delta 值
         
+        # 添加调试信息
+        print(f"[DEBUG] DPO Loss - Loss stats: min={losses.min().item():.4f}, max={losses.max().item():.4f}, mean={losses.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Chosen rewards: min={chosen_rewards.min().item():.4f}, max={chosen_rewards.max().item():.4f}, mean={chosen_rewards.mean().item():.4f}")
+        print(f"[DEBUG] DPO Loss - Rejected rewards: min={rejected_rewards.min().item():.4f}, max={rejected_rewards.max().item():.4f}, mean={rejected_rewards.mean().item():.4f}")
+  
         return losses, chosen_rewards, rejected_rewards
 
 
@@ -517,6 +570,31 @@ class LEDPOTrainer(DPOTrainer):
             # 计算dynamic_beta
             dynamic_beta = self.value_head(chosen_prompt_last_token_hidden).squeeze(-1)
             
+            # 添加调试信息
+            print(f"[DEBUG] ValueHead beta_scale: {self.value_head.beta_scale.item():.4f}")
+            print(f"[DEBUG] Dynamic beta stats: min={dynamic_beta.min().item():.4f}, max={dynamic_beta.max().item():.4f}, mean={dynamic_beta.mean().item():.4f}")
+            
+        # 计算delta值(如果使用参考模型)
+        if reference_chosen_logps is not None and reference_rejected_logps is not None:
+            pi_logratios = policy_chosen_logps - policy_rejected_logps
+            ref_logratios = reference_chosen_logps - reference_rejected_logps
+            delta = pi_logratios - ref_logratios
+            
+            # 添加调试信息
+            positive_delta_mask = (delta > 0)
+            negative_delta_mask = (delta < 0)
+            pos_count = positive_delta_mask.sum().item()
+            neg_count = negative_delta_mask.sum().item()
+            
+            print(f"[DEBUG] Delta stats: min={delta.min().item():.4f}, max={delta.max().item():.4f}, mean={delta.mean().item():.4f}")
+            print(f"[DEBUG] Delta distribution: positive={pos_count}, negative={neg_count}, ratio={pos_count/(pos_count+neg_count):.4f}")
+            
+            if self.use_dynamic_beta:
+                # 计算正负delta样本对应的beta平均值
+                positive_beta_avg = dynamic_beta[positive_delta_mask].mean().item() if pos_count > 0 else 0
+                negative_beta_avg = dynamic_beta[negative_delta_mask].mean().item() if neg_count > 0 else 0
+                print(f"[DEBUG] Beta for positive delta: {positive_beta_avg:.4f}, Beta for negative delta: {negative_beta_avg:.4f}")
+            
         if not self.finetuning_args.use_ref_model:
             if self.loss_type == "orpo":
                 losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, dynamic_beta)
@@ -582,6 +660,38 @@ class LEDPOTrainer(DPOTrainer):
             chosen_prompt_last_token_hidden,
         )
         
+        # 记录delta和beta统计信息 - 新增代码
+        if self.use_dynamic_beta and reference_chosen_logps is not None and reference_rejected_logps is not None:
+            # 计算delta值
+            pi_logratios = policy_chosen_logps - policy_rejected_logps
+            ref_logratios = reference_chosen_logps - reference_rejected_logps
+            delta = pi_logratios - ref_logratios
+            
+            # 创建delta>0和delta<0的掩码
+            positive_delta_mask = (delta > 0).float()
+            negative_delta_mask = (delta < 0).float()
+            
+            # 计算正负delta样本的数量
+            pos_count = positive_delta_mask.sum().item()
+            neg_count = negative_delta_mask.sum().item()
+            
+            # 防止除零错误
+            pos_count = max(pos_count, 1.0)
+            neg_count = max(neg_count, 1.0)
+            
+            # 计算正负delta样本对应的beta平均值
+            positive_beta_avg = (dynamic_beta * positive_delta_mask).sum().item() / pos_count
+            negative_beta_avg = (dynamic_beta * negative_delta_mask).sum().item() / neg_count
+            
+            # 记录指标
+            prefix = "eval_" if train_eval == "eval" else ""
+            metrics[f"{prefix}delta/mean"] = delta.mean().item()
+            metrics[f"{prefix}beta/positive_delta_avg"] = positive_beta_avg
+            metrics[f"{prefix}beta/negative_delta_avg"] = negative_beta_avg
+            metrics[f"{prefix}delta/positive_count"] = pos_count
+            metrics[f"{prefix}delta/negative_count"] = neg_count
+            metrics[f"{prefix}delta/positive_ratio"] = pos_count / (pos_count + neg_count)
+        
         # 计算SFT损失并添加到总损失
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
@@ -601,8 +711,8 @@ class LEDPOTrainer(DPOTrainer):
         # 记录动态beta相关指标
         if self.use_dynamic_beta:
             metrics[f"{prefix}beta/value"] = dynamic_beta.mean().item()
-            metrics[f"{prefix}beta/min"] = dynamic_beta.min().item()
-            metrics[f"{prefix}beta/max"] = dynamic_beta.max().item()
+            # metrics[f"{prefix}beta/min"] = dynamic_beta.min().item() 
+            # metrics[f"{prefix}beta/max"] = dynamic_beta.max().item()
             metrics[f"{prefix}beta/scale"] = self.value_head.beta_scale.item()  
         
         if self.loss_type == "orpo":
@@ -641,7 +751,6 @@ class LEDPOTrainer(DPOTrainer):
                 # 记录模型是否正确预测偏好的比例
                 correct_pref = (disco_probs > 0.5).float().mean().item()
                 metrics[f"{prefix}disco/correct_preference"] = correct_pref
-                
    
         return losses.mean(), metrics
 

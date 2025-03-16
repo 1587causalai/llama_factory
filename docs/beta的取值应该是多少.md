@@ -100,40 +100,81 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# 数据生成
-x = torch.randn(20, 5)  # 20 个 5 维输入
-delta = torch.cat([torch.ones(10), -torch.ones(10)])  # 前 10 个 Delta > 0，后 10 个 Delta < 0
+# 设置随机种子以确保结果可重复
+torch.manual_seed(42)
 
-# 定义 Beta 网络
+# 数据集参数
+num_samples = 20  # 样本数量
+feature_dim = 5   # x 的特征维度
+output_dim = 1    # y_w 和 y_l 的维度（假设为标量）
+
+# 生成模拟数据
+x = torch.randn(num_samples, feature_dim)  # 随机特征向量
+
+# 模拟 y_w 和 y_l，确保 Δ 有正有负
+# 假设 y_w 和 y_l 是标量输出
+y_w = torch.randn(num_samples, output_dim)
+y_l = torch.randn(num_samples, output_dim)
+
+# 计算 Δ，这里简单用 y_w - y_l 的差值
+# 为模拟真实场景，添加一些噪声并控制正负分布
+delta = (y_w - y_l).squeeze() + torch.randn(num_samples) * 0.1
+# 手动调整部分样本的 Δ，使其正负分布更明显
+delta[num_samples // 2:] = -torch.abs(delta[num_samples // 2:])  # 后半部分为负
+delta[:num_samples // 2] = torch.abs(delta[:num_samples // 2])   # 前半部分为正
+
+# 定义 β(x) 网络
 class BetaNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, input_dim):
+        super(BetaNetwork, self).__init__()
+        # 一个简单的两层网络
         self.net = nn.Sequential(
-            nn.Linear(5, 10),
+            nn.Linear(input_dim, 10),
             nn.ReLU(),
             nn.Linear(10, 1),
-            nn.Softplus()
+            nn.Softplus()  # 确保 β(x) > 0
         )
+    
     def forward(self, x):
         return self.net(x)
 
-beta_net = BetaNetwork()
+# 初始化 β(x) 网络
+beta_net = BetaNetwork(feature_dim)
+
+# Sigmoid 函数
+sigmoid = nn.Sigmoid()
 
 # 损失函数
 def loss_fn(beta_net, x, delta):
-    beta_x = beta_net(x).squeeze()
+    beta_x = beta_net(x).squeeze()  # [num_samples]
     z = beta_x * delta
-    return -torch.log(torch.sigmoid(z)).mean()
+    return -torch.log(sigmoid(z)).mean()
 
-# 训练
+# 优化器
 optimizer = optim.Adam(beta_net.parameters(), lr=0.01)
-for epoch in range(200):
+
+# 训练循环
+num_epochs = 1000
+for epoch in range(num_epochs):
     optimizer.zero_grad()
     loss = loss_fn(beta_net, x, delta)
     loss.backward()
     optimizer.step()
-    if epoch % 50 == 0:
-        print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+    
+    if (epoch + 1) % 40 == 0:
+        print(f'Epoch {epoch + 1}, Loss: {loss.item():.4f}')
+
+# 训练后查看结果
+with torch.no_grad():
+    beta_values = beta_net(x).squeeze().numpy()
+    delta_values = delta.numpy()
+    print('\n训练结果：')
+    print(f'{"Sample":<8} {"Δ":<10} {"β(x)":<10}')
+    print('-' * 30)
+    for i in range(num_samples):
+        print(f'{i:<8} {delta_values[i]:<10.4f} {beta_values[i]:<10.4f}')
+    print('\n前 10 个样本 (Δ > 0) 的 β(x) 平均值:', beta_values[:10].mean())
+    print('后 10 个样本 (Δ < 0) 的 β(x) 平均值:', beta_values[10:].mean())
 ```
 
 实验结果:

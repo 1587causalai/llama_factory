@@ -92,6 +92,12 @@ def load_and_process_config(config_path: str) -> Tuple[ModelArguments, DataArgum
     # 处理命令行参数
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
     
+    # 根据参数设置输出目录
+    append_str = "_disco" if finetuning_args.use_disco else ""
+    append_str += "_dynamic_beta" if finetuning_args.use_dynamic_beta else ""
+    append_str += "_freeze_policy_model" if finetuning_args.freeze_policy_model else ""
+    training_args.output_dir = training_args.output_dir + append_str
+    
     # 打印关键参数，帮助调试
     logger.info(f"模型: {model_args.model_name_or_path}")
     logger.info(f"数据集: {data_args.dataset}")
@@ -270,9 +276,9 @@ def setup_dpo_trainer(
         callbacks.append(SaveProcessorCallback())
     
     # 添加SwanLab回调，如果启用
-    if hasattr(finetuning_args, 'use_swanlab') and finetuning_args.use_swanlab:
-        from llamafactory.train.trainer_utils import get_swanlab_callback
-        callbacks.append(get_swanlab_callback(finetuning_args))
+    # if hasattr(finetuning_args, 'use_swanlab') and finetuning_args.use_swanlab:
+    #     from llamafactory.train.trainer_utils import get_swanlab_callback
+    #     callbacks.append(get_swanlab_callback(finetuning_args))
     
     # 添加Reporter回调
     callbacks.append(ReporterCallback(
@@ -411,6 +417,7 @@ def run_ledpo_workflow(config_path: str):
         if finetuning_args.stage != "ledpo":
             raise ValueError(f"配置文件指定的训练阶段不是LEDPO，而是: {finetuning_args.stage}")
         
+
         # 确保输出目录存在
         os.makedirs(training_args.output_dir, exist_ok=True)
         
