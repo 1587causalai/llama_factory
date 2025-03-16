@@ -161,3 +161,32 @@ git checkout -b new_branch_name 0c8aa146a93a0b744659e37c55c42ccdee4c33a4
 1. 激活 `compute_preference_loss` 中的动态 beta 实际计算逻辑
 2. 实现和记录 `pos_beta` 和 `neg_beta` 值
 3. 添加对比实验配置，对照验证动态 beta 的效果 
+
+### 保存点3: 基于最后提示词Token的动态beta实现 (fd369dac)
+
+**内容:**
+- 创建了 `HiddenStateBetaHead` 类，用于基于提示的最后一个token的隐藏状态计算beta值
+- 修改了 `__init__` 方法，将 `LengthBasedBetaHead` 替换为 `HiddenStateBetaHead`
+- 更新了 `concatenated_forward` 方法，实现了从模型输出中提取隐藏状态
+- 添加了提取提示最后一个token位置的代码，并用它来获取对应的隐藏状态
+- 使用 `beta_head` 基于隐藏状态计算动态beta值
+
+**状态说明:**
+- 当前实现支持基于提示语义内容生成更精确的beta值
+- 保持了渐进式开发原则，只在必要处进行了修改
+- 动态beta计算逻辑已完成，但尚未应用到实际损失计算中
+
+**回退方法:**
+```bash
+# 回退到该保存点
+git checkout fd369dac
+
+# 如果需要在该点上创建新分支
+git checkout -b new_branch_name fd369dac
+```
+
+**下一步计划:**
+1. 修改损失计算函数，将动态beta值应用到DPO损失计算中
+2. 添加更详细的beta值监控指标
+3. 针对不同的训练数据集评估动态beta的效果
+4. 探索beta值与样本特征之间的关系 
