@@ -1,0 +1,57 @@
+# 基于frozen_config.yaml的冻结策略模型配置，使用不同的ref模型
+# 运行命令: python ledpo_progressive_dev/run_train_and_plot.py --config experiments/frozen_policy/frozen_config_diff_ref.yaml
+
+### model
+model_name_or_path: /root/models/Qwen1.5-0.5B
+# 使用不同的ref模型（原模型的不同checkpoint或不同初始化）
+ref_model: /root/models/Qwen1.5-0.5B-Chat
+trust_remote_code: true
+
+### method
+stage: foodpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+
+#### dynamic beta
+use_dynamic_beta: true
+freeze_policy: true  # 启用策略模型冻结，只训练beta_head
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true  # 使用bf16精度
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### dataset
+dataset: hh_rlhf_en  # 使用更大的数据集
+dataset_dir: data
+template: qwen
+cutoff_len: 1024
+max_samples: 2000  # 更多样本
+overwrite_cache: true
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+### output
+output_dir: experiments/frozen_policy/results/frozen_diff_ref
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: [wandb]
+
+### eval
+val_size: 0.1
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 10 

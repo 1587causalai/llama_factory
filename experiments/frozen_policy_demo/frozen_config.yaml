@@ -1,0 +1,44 @@
+# 基于qwen15_lora_foodpo.yaml修改的冻结策略模型实验
+# 运行命令: python ledpo_progressive_dev/run_train_and_plot.py --config experiments/frozen_policy_demo/frozen_config.yaml
+
+model_name_or_path: /root/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+stage: foodpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid
+use_dynamic_beta: true
+freeze_policy: true  # 启用策略模型冻结
+
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+
+dataset: dpo_en_demo
+dataset_dir: data
+template: qwen
+cutoff_len: 512
+max_samples: 100
+overwrite_cache: true
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+output_dir: experiments/frozen_policy_demo/results/frozen
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+report_to: [wandb]
+
+eval_dataset: dpo_zh_demo
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 5 
