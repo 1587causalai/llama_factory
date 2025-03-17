@@ -68,10 +68,19 @@ def extract_metrics_from_state(state_data):
                 # 直接从日志中获取delta值，而不是手动计算
                 delta_value = entry.get("eval_delta", None)
                 
+                # 首先检查标准eval_loss，如果不存在则尝试特殊的loss名称
+                eval_loss = entry.get("eval_loss", None)
+                if eval_loss is None:
+                    # 尝试其他可能的loss名称, 同时包含 eval 和 loss 的逻辑. 
+                    for key in entry.keys():
+                        if "loss" in key.lower() and "eval" in key.lower():
+                            eval_loss = entry.get(key)
+                            break
+                
                 eval_entry = {
                     "step": entry["step"],
                     "eval_rewards/accuracies": entry.get("eval_rewards/accuracies", None),
-                    "eval_loss": entry.get("eval_dpo_zh_demo_loss", None),  # 注意特殊的损失名称
+                    "eval_loss": eval_loss,  # 使用找到的任何loss值
                     "eval_rewards/margins": entry.get("eval_rewards/margins", None),
                     "eval_delta": delta_value,  # 直接使用记录的delta值
                     "eval_rewards/chosen": entry.get("eval_rewards/chosen", None),

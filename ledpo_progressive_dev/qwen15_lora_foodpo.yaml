@@ -4,7 +4,7 @@
 ### model
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
-ref_model: /root/models/Qwen1.5-0.5B-Chat
+# ref_model: /root/models/Qwen1.5-0.5B-Chat
 
 ### method
 stage: foodpo

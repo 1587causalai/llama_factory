@@ -5,7 +5,8 @@
 支持标准DPO指标以及LEDPO特定指标(pos_beta, neg_beta)的监控
 
 使用方法:
-    python run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_monitoring
+    python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_monitoring_test
+    
 """
 
 import os

@@ -30,17 +30,17 @@ resume_from_checkpoint: null
 
 
 ### dataset
-dataset: dpo_en_demo
+dataset: hh_rlhf_en  # choices: [hh_rlhf_en, dpo_en_demo]
 dataset_dir: data
 template: qwen
 cutoff_len: 1024  # 对于小模型使用较小的上下文长度
-# max_samples: 100
+max_samples: 2000
 overwrite_cache: true
 preprocessing_num_workers: 4
 dataloader_num_workers: 2
 
 ### output
-output_dir: results/qwen15-0.5b/lora/foodpo
+output_dir: results/qwen15-0.5b/lora/ledpo_exp_fixed_beta
 logging_steps: 5
 save_steps: 100
 plot_loss: true
@@ -50,8 +50,8 @@ report_to: [wandb]
 
 
 ### eval
-eval_dataset: dpo_zh_demo
-# val_size: 0.1
+# eval_dataset: dpo_zh_demo
+val_size: 0.2
 per_device_eval_batch_size: 2
 eval_strategy: steps
 eval_steps: 5 
