@@ -93,7 +93,7 @@ python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_de
 | 4 | 改进动态beta值监控系统 | 57bc56e5 | 2025-03-20 |
 | 5 | 动态beta理论改进与实验验证 | ec6b82c1 | 2025-03-23 |
 | 6 | 冻结策略模型实验框架 | 8df6194d | 2025-03-26 |
-| 7 | 成功修复beta head更新机制 | d85fe23a | 2025-04-02 |
+| 7 | 成功修复beta head更新机制 | v0.7.0-beta-head-fix | 2025-04-02 |
 
 如需回退到特定保存点，请使用以下命令：
 ```bash
