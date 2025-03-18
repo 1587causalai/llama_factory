@@ -179,3 +179,5 @@ generated_predictions.jsonl
 
 
 results/
+# experiments/ 所有的二级目录
+experiments/*/*/

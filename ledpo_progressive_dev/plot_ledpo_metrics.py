@@ -18,6 +18,9 @@ import pandas as pd
 
 # 设置字体和样式
 plt.style.use('seaborn-v0_8-darkgrid')
+# 使用标准字体配置，适合学术论文
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['mathtext.fontset'] = 'stix'
 
 # 指定关心的指标及其显示顺序
 PRIORITY_METRICS = [
@@ -200,7 +203,7 @@ def plot_combined_metrics(metrics_dict, output_dir):
     plt.savefig(os.path.join(output_dir, 'ledpo_combined_metrics.png'), dpi=150, bbox_inches='tight')
     plt.close(fig)
     
-    print(f"已生成合并图表: {os.path.join(output_dir, 'ledpo_combined_metrics.png')}")
+    print(f"已生成图表: {os.path.join(output_dir, 'ledpo_combined_metrics.png')}")
 
 def main():
     """主函数"""
@@ -221,8 +224,8 @@ def main():
     # 提取指标数据
     metrics_dict = extract_metrics_from_state(state_data)
     
-    # 输出目录
-    output_dir = os.path.join(args.result_dir, 'ledpo_plots')
+    # 直接将图片输出到结果目录，不再创建子目录
+    output_dir = args.result_dir
     
     # 打印可用指标信息
     print("找到的指标数据:")

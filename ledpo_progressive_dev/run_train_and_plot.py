@@ -9,86 +9,62 @@
     
 """
 
-import os
-import sys
-import time
 import argparse
+import os
 import subprocess
+import sys
 from pathlib import Path
 
-# 添加src目录到系统路径
-repo_root = Path(__file__).resolve().parent.parent
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
 def main():
-    """主函数，按顺序执行训练和绘图"""
-    parser = argparse.ArgumentParser(description='运行训练并生成监控图表')
-    parser.add_argument('--config', type=str, default='ledpo_progressive_dev/qwen15_lora_foodpo.yaml',
-                        help='训练配置文件路径')
-    parser.add_argument('--wandb_project', type=str, default='ledpo_monitoring',
-                        help='W&B项目名称')
-    parser.add_argument('--no_plot', action='store_true',
-                        help='仅进行训练，不生成图表')
+    """主函数"""
+    parser = argparse.ArgumentParser(description='运行训练和绘图')
+    parser.add_argument('--config', type=str, required=True, help='训练配置文件路径')
+    parser.add_argument('--wandb_project', type=str, default='', help='wandb项目名称')
     args = parser.parse_args()
     
-    # 设置wandb项目名称
+    # 确保配置文件存在
+    config_path = args.config
+    if not os.path.exists(config_path):
+        print(f"错误: 配置文件不存在: {config_path}")
+        return 1
+    
+    # 构建训练命令
+    train_cmd = ['llamafactory-cli', 'train', config_path]
     if args.wandb_project:
-        os.environ["WANDB_PROJECT"] = args.wandb_project
+        os.environ['WANDB_PROJECT'] = args.wandb_project
     
-    # 1. 运行训练
-    print("=" * 60)
-    print(f"启动训练，使用配置: {args.config}")
-    print("=" * 60)
+    # 获取输出目录
+    import yaml
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    output_dir = config.get('output_dir', 'results/default')
     
-    # 使用llamafactory-cli运行训练
-    train_cmd = ["llamafactory-cli", "train", args.config]
-    train_process = subprocess.run(train_cmd)
+    # 输出信息
+    print('=' * 60)
+    print(f"启动训练，使用配置: {config_path}")
+    print('=' * 60)
     
-    if train_process.returncode != 0:
-        print(f"训练失败，返回码: {train_process.returncode}")
-        return
+    # 运行训练
+    train_result = subprocess.run(train_cmd)
+    if train_result.returncode != 0:
+        print(f"训练失败，返回码: {train_result.returncode}")
+        return train_result.returncode
     
-    # 提取输出目录
-    output_dir = None
-    with open(args.config, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip().startswith('output_dir:'):
-                output_dir = line.split(':', 1)[1].strip()
-                break
+    # 获取trainer_state.json路径
+    trainer_state_path = os.path.join(output_dir, 'trainer_state.json')
+    if not os.path.exists(trainer_state_path):
+        print(f"警告: 无法找到trainer_state.json: {trainer_state_path}")
+        # 不中断执行
+    else:
+        # 现在脚本将图片直接输出到结果目录，不再创建子目录
+        plot_cmd = ['python', 'ledpo_progressive_dev/plot_ledpo_metrics.py', '--result_dir', output_dir]
+        subprocess.run(plot_cmd)
     
-    if not output_dir:
-        print("无法从配置中找到output_dir")
-        return
+    print('=' * 60)
+    print(f"训练和绘图完成，结果保存在: {output_dir}")
+    print('=' * 60)
     
-    # 确保输出目录是绝对路径
-    if not os.path.isabs(output_dir):
-        output_dir = os.path.join(repo_root, output_dir)
-    
-    # 2. 如果需要，生成图表
-    if not args.no_plot:
-        print("\n" + "=" * 60)
-        print(f"训练完成，开始生成图表...")
-        print("=" * 60)
-        
-        # 等待1秒确保所有日志都已写入
-        time.sleep(1)
-        
-        # 调用绘图脚本
-        plot_script = os.path.join(os.path.dirname(__file__), 'plot_ledpo_metrics.py')
-        plot_cmd = [sys.executable, plot_script, "--result_dir", output_dir]
-        
-        plot_process = subprocess.run(plot_cmd)
-        
-        if plot_process.returncode != 0:
-            print(f"绘图失败，返回码: {plot_process.returncode}")
-            return
-        
-        print("\n" + "=" * 60)
-        print(f"图表已生成到目录: {os.path.join(output_dir, 'ledpo_plots')}")
-        print("=" * 60)
-    
-    print("\n所有操作已完成！")
-    
+    return 0
+
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

@@ -27,12 +27,28 @@ import torch.nn.functional as F
 from transformers import Trainer
 from trl import DPOTrainer
 from trl.trainer import disable_dropout_in_model
+from trl.trainer.utils import cap_exp
 from typing_extensions import override
 
 from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
 from ..callbacks import SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler, get_batch_logps, nested_detach
+from typing import Tuple
+
+from enum import Enum
+from typing import Dict, Literal, Optional
+
+
+class FDivergenceType(Enum):
+    REVERSE_KL = "reverse_kl"
+    JS_DIVERGENCE = "js_divergence"
+    ALPHA_DIVERGENCE = "alpha_divergence"
+
+
+class FDivergenceConstants:
+    ALPHA_DIVERGENCE_COEF_KEY = "alpha_divergence_coef"
+    ALPHA_DIVERGENCE_COEF_DEFAULT = 1.0
 
 
 if TYPE_CHECKING:
@@ -364,11 +380,13 @@ class CustomFooDPOTrainer(DPOTrainer):
                 
                 # 使用beta_head计算动态beta值
                 self.current_beta_values = self.beta_head(chosen_prompt_last_token_hidden)
+        else:
+            self.current_beta_values = torch.ones_like(chosen_logps) * self.beta
 
         if self.loss_type in ["ipo", "orpo", "simpo"]:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps, self.current_beta_values
         else:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length, self.current_beta_values
 
     @override
     def compute_reference_log_probs(
@@ -405,15 +423,20 @@ class CustomFooDPOTrainer(DPOTrainer):
             policy_chosen_logits,
             policy_rejected_logits,
             policy_chosen_logps_avg,
+            beta_values
         ) = self.concatenated_forward(model, batch)
 
-        reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
+        beta_values = beta_values if beta_values is not None else self.current_beta_values
+
+        reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch) # 这个步骤会重新计算 self.current_beta_values
+
         losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
             policy_chosen_logps,
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
-        )
+            beta_values
+        ) # 这个步骤会重新计算 self.current_delta_values, self.current_pos_beta, self.current_neg_beta
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
             losses += self.ftx_gamma * sft_loss
@@ -429,23 +452,19 @@ class CustomFooDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
         
         # 添加 delta 值指标 - 无论是否使用动态beta都记录
-        if hasattr(self, "current_delta_values") and self.current_delta_values is not None:
-            metrics[f"{prefix}delta"] = self.current_delta_values.mean().item()
+        metrics[f"{prefix}delta"] = self.current_delta_values.mean().item()
         
         # 添加 beta 相关指标
-        beta = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
+        metrics[f"{prefix}beta/mean"] = beta_values.mean().item()
+        # 添加pos_beta和neg_beta指标
+        if hasattr(self, "current_pos_beta") and self.current_pos_beta is not None: 
+            metrics[f"{prefix}pos_beta"] = self.current_pos_beta.mean().item()
+        if hasattr(self, "current_neg_beta") and self.current_neg_beta is not None:
+            metrics[f"{prefix}neg_beta"] = self.current_neg_beta.mean().item()
         
-        if self.use_dynamic_beta and hasattr(self, "current_beta_values") and self.current_beta_values is not None:
-            metrics[f"{prefix}beta/mean"] = self.current_beta_values.mean().item()
-            
-            # 添加pos_beta和neg_beta指标
-            if hasattr(self, "current_pos_beta") and self.current_pos_beta is not None:
-                metrics[f"{prefix}pos_beta"] = self.current_pos_beta.mean().item()
-            
-            if hasattr(self, "current_neg_beta") and self.current_neg_beta is not None:
-                metrics[f"{prefix}neg_beta"] = self.current_neg_beta.mean().item()
-            
+        
         if self.loss_type == "orpo":
+            beta = beta_values if self.use_dynamic_beta is not None else self.beta
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
 
@@ -489,34 +508,29 @@ class CustomFooDPOTrainer(DPOTrainer):
         policy_rejected_logps: "torch.Tensor",
         reference_chosen_logps: Optional["torch.Tensor"],
         reference_rejected_logps: Optional["torch.Tensor"],
+        beta_values: Optional["torch.Tensor"] = None
     ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
         r"""Compute loss for preference learning."""
-        # 计算完整的delta值，考虑参考模型
-        if not self.finetuning_args.use_ref_model:
-            # 如果不使用参考模型，则简化为policy_chosen_logps - policy_rejected_logps
-            self.current_delta_values = policy_chosen_logps - policy_rejected_logps
-        else:
-            # 按照理论公式计算delta: (π_θ(y_w|x) - π_ref(y_w|x)) - (π_θ(y_l|x) - π_ref(y_l|x))
-            if reference_chosen_logps is not None and reference_rejected_logps is not None:
-                self.current_delta_values = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
-            else:
-                # 如果没有参考模型的logps，则使用简化计算
-                self.current_delta_values = policy_chosen_logps - policy_rejected_logps
-        
-        # 根据delta值划分pos_delta和neg_delta样本
-        if self.current_delta_values is not None:
-            pos_mask = self.current_delta_values > 0  # Δ > 0的样本掩码
-            neg_mask = ~pos_mask  # Δ <= 0的样本掩码
-            
-            if self.use_dynamic_beta and self.current_beta_values is not None:
-                # 获取pos_beta和neg_beta
-                self.current_pos_beta = self.current_beta_values[pos_mask] if pos_mask.any() else None
-                self.current_neg_beta = self.current_beta_values[neg_mask] if neg_mask.any() else None
-        
-        if not self.finetuning_args.use_ref_model:
-            # 使用动态beta值(如果可用)或回退到静态beta
+
+        if beta_values is None:
             beta_values = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
+
+        # 计算完整的delta值，考虑参考模型
+        if self.finetuning_args.use_ref_model and reference_chosen_logps is not None and reference_rejected_logps is not None:
+            self.current_delta_values = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
+        else:
+            self.current_delta_values = policy_chosen_logps - policy_rejected_logps
+
+        # 根据delta值划分pos_delta和neg_delta样本
+        pos_mask = self.current_delta_values > 0  # 使用delta值而非beta值划分
+        neg_mask = ~pos_mask  # Δ <= 0的样本掩码
             
+        if self.use_dynamic_beta:
+            # 获取pos_beta和neg_beta
+            self.current_pos_beta = beta_values[pos_mask] if pos_mask.any() else None
+            self.current_neg_beta = beta_values[neg_mask] if neg_mask.any() else None
+        
+        if not self.finetuning_args.use_ref_model:
             if self.loss_type == "orpo":
                 losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
             elif self.loss_type == "simpo":
@@ -528,11 +542,171 @@ class CustomFooDPOTrainer(DPOTrainer):
             chosen_rewards = beta_values * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = beta_values * policy_rejected_logps.to(self.accelerator.device).detach()
         else: # 如果 use_dynamic_beta 为 True，则暂时性使用 self.current_beta_values 计算损失
-            tmp_beta = self.beta
-            self.beta = self.current_beta_values if self.use_dynamic_beta and self.current_beta_values is not None else self.beta
-            losses, chosen_rewards, rejected_rewards = self.dpo_loss(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps
+            losses, chosen_rewards, rejected_rewards = self.dynamic_beta_dpo_loss(
+                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, beta_values
             ) # 这个函数使用 self.beta 计算损失
-            self.beta = tmp_beta # 恢复 self.beta 的值
+
+        return losses, chosen_rewards, rejected_rewards
+    
+
+    def dynamic_beta_dpo_loss(
+        self,
+        policy_chosen_logps: torch.FloatTensor,
+        policy_rejected_logps: torch.FloatTensor,
+        reference_chosen_logps: torch.FloatTensor,
+        reference_rejected_logps: torch.FloatTensor,
+        beta_values: torch.FloatTensor,
+    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+        """Compute the DPO loss for a batch of policy and reference model log probabilities.
+
+        Args:
+            policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
+            policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
+            reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
+            reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
+
+        Returns:
+            A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
+            The losses tensor contains the DPO loss for each example in the batch.
+            The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
+        """
+        chosen_logratios = policy_chosen_logps.to(self.accelerator.device) - (
+            not self.reference_free
+        ) * reference_chosen_logps.to(self.accelerator.device)
+        rejected_logratios = policy_rejected_logps.to(self.accelerator.device) - (
+            not self.reference_free
+        ) * reference_rejected_logps.to(self.accelerator.device)
+
+        if self.f_divergence_type == FDivergenceType.ALPHA_DIVERGENCE.value:
+            # The alpha-divergence formula: (1 - u^-alpha) / alpha
+            # The divergence difference between the chosen and rejected sample is:
+            #     (1 - u[w]^-alpha) / alpha - (1 - u[l]^-alpha) / alpha
+            #        = (u[l]^-alpha - u[w]^-alpha) / alpha
+            # where u[w] and u[l] are the policy/reference probability ratios
+            # for the chosen and rejected samples, respectively.
+            alpha_coef = FDivergenceConstants.ALPHA_DIVERGENCE_COEF_DEFAULT
+            if self.f_divergence_params and FDivergenceConstants.ALPHA_DIVERGENCE_COEF_KEY in self.f_divergence_params:
+                alpha_coef = float(self.f_divergence_params[FDivergenceConstants.ALPHA_DIVERGENCE_COEF_KEY])
+            logits = (cap_exp(rejected_logratios * -alpha_coef) - cap_exp(chosen_logratios * -alpha_coef)) / alpha_coef
+        else:
+            pi_logratios = policy_chosen_logps - policy_rejected_logps
+            if self.reference_free:
+                ref_logratios = torch.tensor([0], dtype=pi_logratios.dtype, device=pi_logratios.device)
+            else:
+                ref_logratios = reference_chosen_logps - reference_rejected_logps
+
+            pi_logratios = pi_logratios.to(self.accelerator.device)
+            ref_logratios = ref_logratios.to(self.accelerator.device)
+            logits = pi_logratios - ref_logratios
+
+            if self.f_divergence_type == FDivergenceType.JS_DIVERGENCE.value:
+                # The js-divergence formula: log(2 * u / (1 + u))
+                # The divergence difference between the chosen and rejected sample is:
+                #     log(2 * u[w] / (1 + u[w])) - log(2 * u[l] / (1 + u[l]))
+                #       = log(u[w]) - log(u[l]) - (log(1 + u[w]) - log(1 + u[l]))
+                # where u[w] and u[l] are the policy/reference probability ratios
+                # for the chosen and rejected samples, respectively.
+                logits -= F.softplus(chosen_logratios) - F.softplus(rejected_logratios)
+
+        # The beta is a temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5.
+        # We ignore the reference model as beta -> 0. The label_smoothing parameter encodes our uncertainty about the labels and
+        # calculates a conservative DPO loss.
+        if self.loss_type == "sigmoid":
+            losses = (
+                -F.logsigmoid(beta_values * logits) * (1 - self.label_smoothing)
+                - F.logsigmoid(-beta_values * logits) * self.label_smoothing
+            )
+        elif self.loss_type == "robust":
+            losses = (
+                -F.logsigmoid(beta_values * logits) * (1 - self.label_smoothing)
+                + F.logsigmoid(-beta_values * logits) * self.label_smoothing
+            ) / (1 - 2 * self.label_smoothing)
+        elif self.loss_type == "exo_pair":
+            # eqn (16) of the EXO paper: https://arxiv.org/pdf/2402.00856
+            import math
+
+            if self.label_smoothing == 0:
+                self.label_smoothing = 1e-3
+            losses = (beta_values * logits).sigmoid() * (
+                F.logsigmoid(beta_values * logits) - math.log(1 - self.label_smoothing)
+            ) + (-beta_values * logits).sigmoid() * (F.logsigmoid(-beta_values * logits) - math.log(self.label_smoothing))
+        elif self.loss_type == "hinge":
+            losses = torch.relu(1 - beta_values * logits)
+        elif self.loss_type == "ipo":
+            # eqn (17) of the paper where beta is the regularization parameter for the IPO loss, denoted by tau in the paper.
+            losses = (logits - 1 / (2 * beta_values)) ** 2
+        elif self.loss_type == "bco_pair":
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            rejected_logratios = policy_rejected_logps - reference_rejected_logps
+
+            chosen_rewards = beta_values * chosen_logratios
+            rejected_rewards = beta_values * rejected_logratios
+            rewards = torch.cat((chosen_rewards, rejected_rewards), 0).mean().detach()
+            self.running.update(rewards)
+            delta = self.running.mean
+
+            losses = -F.logsigmoid((beta_values * chosen_logratios) - delta) - F.logsigmoid(
+                -(beta_values * rejected_logratios - delta)
+            )
+        elif self.loss_type == "sppo_hard":
+            # In the paper (https://arxiv.org/pdf/2405.00675), SPPO employs a soft probability approach, estimated using the PairRM score. The probability calculation is conducted outside of the trainer class. The version described here is the hard probability version, where P in Equation (4.7) of Algorithm 1 is set to 1 for the winner and 0 for the loser.
+            a = policy_chosen_logps - reference_chosen_logps
+            b = policy_rejected_logps - reference_rejected_logps
+
+            losses = (a - 0.5 / beta_values) ** 2 + (b + 0.5 / beta_values) ** 2
+        elif self.loss_type == "nca_pair":
+            chosen_rewards = (policy_chosen_logps - reference_chosen_logps) * beta_values
+            rejected_rewards = (policy_rejected_logps - reference_rejected_logps) * beta_values
+            losses = (
+                -F.logsigmoid(chosen_rewards)
+                - 0.5 * F.logsigmoid(-chosen_rewards)
+                - 0.5 * F.logsigmoid(-rejected_rewards)
+            )
+        elif self.loss_type == "aot_pair":
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            rejected_logratios = policy_rejected_logps - reference_rejected_logps
+
+            chosen_logratios_sorted, _ = torch.sort(chosen_logratios, dim=0)
+            rejected_logratios_sorted, _ = torch.sort(rejected_logratios, dim=0)
+
+            delta = chosen_logratios_sorted - rejected_logratios_sorted
+
+            losses = (
+                -F.logsigmoid(beta_values * delta) * (1 - self.label_smoothing)
+                - F.logsigmoid(-beta_values * delta) * self.label_smoothing
+            )
+
+        elif self.loss_type == "aot":
+            pi_logratios = policy_chosen_logps - policy_rejected_logps
+            ref_logratios = reference_chosen_logps - reference_rejected_logps
+
+            pi_logratios_sorted, _ = torch.sort(pi_logratios, dim=0)
+            ref_logratios_sorted, _ = torch.sort(ref_logratios, dim=0)
+
+            delta = pi_logratios_sorted - ref_logratios_sorted
+
+            losses = (
+                -F.logsigmoid(beta_values * delta) * (1 - self.label_smoothing)
+                - F.logsigmoid(-beta_values * delta) * self.label_smoothing
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'bco_pair', 'sppo_hard', 'nca_pair', 'robust', 'exo_pair']"
+            )
+
+        chosen_rewards = (
+            beta_values
+            * (
+                policy_chosen_logps.to(self.accelerator.device) - reference_chosen_logps.to(self.accelerator.device)
+            ).detach()
+        )
+        rejected_rewards = (
+            beta_values
+            * (
+                policy_rejected_logps.to(self.accelerator.device)
+                - reference_rejected_logps.to(self.accelerator.device)
+            ).detach()
+        )
 
         return losses, chosen_rewards, rejected_rewards
