@@ -124,7 +124,19 @@ class LoraArguments:
 
 @dataclass
 class RLHFArguments:
-    r"""Arguments pertaining to the PPO, DPO and KTO training."""
+    r"""
+    Arguments pertaining to the PPO, DPO and KTO training.
+    """
+
+    # custom parameters for our DPO variants
+    use_dynamic_beta: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use the dynamic beta."},
+    )
+    disco_pref: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use the disco preference probability."},
+    )
 
     pref_beta: float = field(
         default=0.1,
@@ -154,6 +166,7 @@ class RLHFArguments:
         default=0.5,
         metadata={"help": "The target reward margin term in SimPO loss."},
     )
+
     ppo_buffer_size: int = field(
         default=1,
         metadata={"help": "The number of mini-batches to make experience buffer in a PPO optimization step."},
@@ -437,9 +450,9 @@ class FinetuningArguments(
             if isinstance(arg, str):
                 return [item.strip() for item in arg.split(",")]
             return arg
-
-        self.freeze_trainable_modules: list[str] = split_arg(self.freeze_trainable_modules)
-        self.freeze_extra_modules: Optional[list[str]] = split_arg(self.freeze_extra_modules)
+        
+        self.freeze_trainable_modules: List[str] = split_arg(self.freeze_trainable_modules)
+        self.freeze_extra_modules: Optional[List[str]] = split_arg(self.freeze_extra_modules)
         self.lora_alpha: int = self.lora_alpha or self.lora_rank * 2
         self.lora_target: list[str] = split_arg(self.lora_target)
         self.additional_target: Optional[list[str]] = split_arg(self.additional_target)
