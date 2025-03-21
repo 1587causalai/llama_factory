@@ -127,7 +127,6 @@ class RLHFArguments:
     r"""
     Arguments pertaining to the PPO, DPO and KTO training.
     """
-
     # custom parameters for our DPO variants
     use_dynamic_beta: bool = field(
         default=False,
