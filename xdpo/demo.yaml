@@ -1,6 +1,6 @@
 ### 定制参数
-use_dynamic_beta: false
-disco_pref: false
+use_dynamic_beta: true
+disco_pref: true
 
 ### model
 model_name_or_path: /Users/gongqian/models/Qwen1.5-0.5B

@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import warnings
 from collections import defaultdict
 from contextlib import nullcontext
@@ -34,6 +35,7 @@ from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
 from ..callbacks import SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler, get_batch_logps, nested_detach
+from .beta_head import HiddenStateBetaHead
 
 
 if TYPE_CHECKING:
@@ -152,6 +154,7 @@ class CustomDPOTrainer(DPOTrainer):
         self.use_dynamic_beta = finetuning_args.use_dynamic_beta
         self.disco_pref = finetuning_args.disco_pref
 
+
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
@@ -178,11 +181,54 @@ class CustomDPOTrainer(DPOTrainer):
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
 
+        if self.use_dynamic_beta:
+            self.beta_head = HiddenStateBetaHead(
+                hidden_size=model.config.hidden_size,
+                beta_base=self.beta
+            ).to(self.accelerator.device)
+
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
+            # 创建基本优化器
             self.optimizer = create_custom_optimizer(self.model, self.args, self.finetuning_args)
-        return super().create_optimizer()
+
+            if self.optimizer is None:
+                self.optimizer = super().create_optimizer()
+            
+            # 添加beta_head参数到优化器
+            if self.use_dynamic_beta and hasattr(self, "beta_head"):
+
+                
+                beta_head_params = list(self.beta_head.parameters())
+                
+                print(f"[DEBUG] BetaHead parameters:")
+                for name, param in self.beta_head.named_parameters():
+                    print(f"[DEBUG]   {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+                
+                # 为beta_head参数设置更高的学习率（例如，是基本学习率的10倍）
+                beta_head_lr = self.args.learning_rate * 10.0
+                
+                # 添加参数组
+                params_config = {
+                    "params": beta_head_params,
+                    "lr": beta_head_lr,  # 使用更高的学习率
+                }
+                
+                # 复制原优化器配置（除了学习率和参数）
+                for k, v in self.optimizer.param_groups[0].items():
+                    if k != "params" and k != "lr":
+                        params_config[k] = v
+                
+                # 添加参数组
+                self.optimizer.add_param_group(params_config)
+                
+                # 打印优化器信息
+                print(f"[DEBUG] Optimizer param groups:")
+                for i, group in enumerate(self.optimizer.param_groups):
+                    print(f"[DEBUG]   Group {i}: {len(group['params'])} parameters, lr={group['lr']}")
+                
+        return self.optimizer
 
     @override
     def create_scheduler(
@@ -203,22 +249,24 @@ class CustomDPOTrainer(DPOTrainer):
         r"""Replace the method of DPO Trainer with the one of the standard Trainer."""
         return Trainer.get_batch_samples(self, epoch_iterator, num_batches)
 
-    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def odds_ratio_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", beta_values: Optional["torch.Tensor"] = None) -> "torch.Tensor":
         r"""Compute ORPO's odds ratio (OR) loss for batched log probabilities of the policy model."""
         log_odds = (chosen_logps - rejected_logps) - (
             torch.log1p(-torch.exp(chosen_logps)) - torch.log1p(-torch.exp(rejected_logps))
         )
         sft_loss = -chosen_logps
-        odds_ratio_loss = -F.logsigmoid(log_odds)
-        orpo_loss = sft_loss + self.beta * odds_ratio_loss
+        odds_ratio_loss = -torch.log(compute_pref_probs(log_odds, 1.0, self.disco_pref))  # 使用1.0作为beta值, 后面的 beta_values 是动态的
+        beta = beta_values if beta_values is not None else self.beta
+        orpo_loss = sft_loss + beta * odds_ratio_loss
         return orpo_loss
 
-    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", beta_values: Optional["torch.Tensor"] = None) -> "torch.Tensor":
         r"""Compute SimPO loss for batched log probabilities of the policy model."""
         pi_logratios = chosen_logps - rejected_logps
         gamma_logratios = self.simpo_gamma / self.beta
         logits = pi_logratios - gamma_logratios
-        simpo_loss = -F.logsigmoid(self.beta * logits)
+        beta = beta_values if beta_values is not None else self.beta
+        simpo_loss = -torch.log(compute_pref_probs(logits, beta, self.disco_pref))
         return simpo_loss
 
     def compute_preference_loss(
@@ -227,21 +275,24 @@ class CustomDPOTrainer(DPOTrainer):
         policy_rejected_logps: "torch.Tensor",
         reference_chosen_logps: Optional["torch.Tensor"],
         reference_rejected_logps: Optional["torch.Tensor"],
+        beta_values: Optional["torch.Tensor"] = None
     ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
         r"""Compute loss for preference learning."""
+        
         if not self.finetuning_args.use_ref_model:
             if self.loss_type == "orpo":
-                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps)
+                losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
             elif self.loss_type == "simpo":
-                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps)
+                losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
             else:
                 raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
-
-            chosen_rewards = self.beta * policy_chosen_logps.to(self.accelerator.device).detach()
-            rejected_rewards = self.beta * policy_rejected_logps.to(self.accelerator.device).detach()
+            
+            beta = beta_values if beta_values is not None else self.beta
+            chosen_rewards = beta * policy_chosen_logps.to(self.accelerator.device).detach()
+            rejected_rewards = beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
             losses, chosen_rewards, rejected_rewards = self.dpo_loss(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps
+                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, beta_values
             )
 
         return losses, chosen_rewards, rejected_rewards
@@ -256,21 +307,49 @@ class CustomDPOTrainer(DPOTrainer):
         """
         if self.finetuning_args.use_ref_model:
             batch = nested_detach(batch, clone=True)  # avoid error
+        if self.use_dynamic_beta:
+            model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=True)
+            all_logits: torch.Tensor = model_outputs.logits.to(torch.float32)
+            last_layer_hidden_states: torch.Tensor = model_outputs.hidden_states[-1].to(torch.float32) # [batch_size, seq_len, hidden_size]
 
-        all_logits: torch.Tensor = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
-        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
-        if self.loss_type in ["ipo", "orpo", "simpo"]:
-            all_logps = all_logps / valid_length
+            all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
+            if self.loss_type in ["ipo", "orpo", "simpo"]:
+                all_logps = all_logps / valid_length
 
-        batch_size = batch["input_ids"].size(0) // 2
-        chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
-        chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
-        chosen_length, _ = valid_length.split(batch_size, dim=0)
+            batch_size = batch["input_ids"].size(0) // 2
+            chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
+            chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
+            chosen_length, _ = valid_length.split(batch_size, dim=0)
 
-        if self.loss_type in ["ipo", "orpo", "simpo"]:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
+            chosen_hidden_states, rejected_hidden_states = last_layer_hidden_states.split(batch_size, dim=0)
+            prompt_lengths = self.get_prompt_lengths(batch)  
+            prompt_idx = (prompt_lengths - 1).clamp(0, chosen_hidden_states.size(1) - 1)
+            batch_idx = torch.arange(batch_size)
+            prompt_last_token_hidden_states = chosen_hidden_states[batch_idx, prompt_idx] # [batch_size, hidden_size]
+            beta_values = self.beta_head(prompt_last_token_hidden_states)
+
+            if self.loss_type in ["ipo", "orpo", "simpo"]:
+                return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps, beta_values
+            else:
+                return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length, beta_values
+            
         else:
-            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length
+            
+            all_logits: torch.Tensor = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
+            all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
+            if self.loss_type in ["ipo", "orpo", "simpo"]:
+                all_logps = all_logps / valid_length
+
+            batch_size = batch["input_ids"].size(0) // 2
+            chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
+            chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
+            chosen_length, _ = valid_length.split(batch_size, dim=0)
+            beta_values = None
+
+            if self.loss_type in ["ipo", "orpo", "simpo"]:
+                return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps, beta_values
+            else:
+                return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length, beta_values
 
     @override
     def compute_reference_log_probs(
@@ -301,13 +380,16 @@ class CustomDPOTrainer(DPOTrainer):
     ) -> tuple["torch.Tensor", dict[str, "torch.Tensor"]]:
         r"""Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
+
         (
             policy_chosen_logps,
             policy_rejected_logps,
             policy_chosen_logits,
             policy_rejected_logits,
             policy_chosen_logps_avg,
+            beta_values,
         ) = self.concatenated_forward(model, batch)
+        beta = beta_values if self.use_dynamic_beta else self.beta
 
         reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
         losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
@@ -315,6 +397,7 @@ class CustomDPOTrainer(DPOTrainer):
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
+            beta_values,
         )
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
@@ -331,7 +414,18 @@ class CustomDPOTrainer(DPOTrainer):
         metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
-            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
+            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
+
+        if self.use_dynamic_beta:
+            metrics[f"{prefix}beta"] = beta_values.mean().item()
+            delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
+            metrics[f"{prefix}delta"] = delta.mean().item()
+            pos_delta_beta = beta_values[delta > 0]
+            neg_delta_beta = beta_values[delta <= 0]
+            # 一个batch 太小, 很容易为空, 我也不知道填充一个什么样的值比较好, 所以就填充一个平均值.
+            fill_value = beta_values.mean().item()
+            metrics[f"{prefix}beta_pos_delta"] = pos_delta_beta.mean().item() if pos_delta_beta.numel() > 0 else fill_value
+            metrics[f"{prefix}beta_neg_delta"] = neg_delta_beta.mean().item() if neg_delta_beta.numel() > 0 else fill_value
 
         return losses.mean(), metrics
 
@@ -375,6 +469,7 @@ class CustomDPOTrainer(DPOTrainer):
         policy_rejected_logps: torch.FloatTensor,
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
+        beta_values: Optional["torch.Tensor"] = None
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """Compute the DPO loss for a batch of policy and reference model log probabilities.
 
@@ -396,6 +491,7 @@ class CustomDPOTrainer(DPOTrainer):
             not self.reference_free
         ) * reference_rejected_logps.to(self.accelerator.device)
 
+        beta = beta_values if beta_values is not None else self.beta
 
         def log_pref_prob(logits, beta):
             if self.disco_pref:
@@ -423,47 +519,47 @@ class CustomDPOTrainer(DPOTrainer):
                 logits -= F.softplus(chosen_logratios) - F.softplus(rejected_logratios)
         if self.loss_type == "sigmoid":
             losses = (
-                -log_pref_prob(logits, self.beta) * (1 - self.label_smoothing)
-                - log_pref_prob(-logits, self.beta) * self.label_smoothing
+                -log_pref_prob(logits, beta) * (1 - self.label_smoothing)
+                - log_pref_prob(-logits, beta) * self.label_smoothing
             )
         elif self.loss_type == "robust":
             losses = (
-                -log_pref_prob(logits, self.beta) * (1 - self.label_smoothing)
-                + log_pref_prob(-logits, self.beta) * self.label_smoothing
+                -log_pref_prob(logits, beta) * (1 - self.label_smoothing)
+                + log_pref_prob(-logits, beta) * self.label_smoothing
             ) / (1 - 2 * self.label_smoothing)
         elif self.loss_type == "exo_pair":
             import math
 
             if self.label_smoothing == 0:
                 self.label_smoothing = 1e-3
-            losses = (self.beta * logits).sigmoid() * (
-                log_pref_prob(logits, self.beta) - math.log(1 - self.label_smoothing)
-            ) + (-self.beta * logits).sigmoid() * (log_pref_prob(-logits, self.beta) - math.log(self.label_smoothing))
+            losses = (beta * logits).sigmoid() * (
+                log_pref_prob(logits, beta) - math.log(1 - self.label_smoothing)
+            ) + (-beta * logits).sigmoid() * (log_pref_prob(-logits, beta) - math.log(self.label_smoothing))
         elif self.loss_type == "hinge":
-            losses = torch.relu(1 - self.beta * logits)
+            losses = torch.relu(1 - beta * logits)
         elif self.loss_type == "ipo":
-            losses = (logits - 1 / (2 * self.beta)) ** 2
+            losses = (logits - 1 / (2 * beta)) ** 2
         elif self.loss_type == "bco_pair":
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             rejected_logratios = policy_rejected_logps - reference_rejected_logps
 
-            chosen_rewards = self.beta * chosen_logratios
-            rejected_rewards = self.beta * rejected_logratios
+            chosen_rewards = beta * chosen_logratios
+            rejected_rewards = beta * rejected_logratios
             rewards = torch.cat((chosen_rewards, rejected_rewards), 0).mean().detach()
             self.running.update(rewards)
             delta = self.running.mean
 
-            losses = -log_pref_prob((self.beta * chosen_logratios) - delta) - log_pref_prob(
-                -(self.beta * rejected_logratios - delta)
+            losses = -log_pref_prob((beta * chosen_logratios) - delta) - log_pref_prob(
+                -(beta * rejected_logratios - delta)
             )
         elif self.loss_type == "sppo_hard":
             a = policy_chosen_logps - reference_chosen_logps
             b = policy_rejected_logps - reference_rejected_logps
 
-            losses = (a - 0.5 / self.beta) ** 2 + (b + 0.5 / self.beta) ** 2
+            losses = (a - 0.5 / beta) ** 2 + (b + 0.5 / beta) ** 2
         elif self.loss_type == "nca_pair":
-            chosen_rewards = (policy_chosen_logps - reference_chosen_logps) * self.beta
-            rejected_rewards = (policy_rejected_logps - reference_rejected_logps) * self.beta
+            chosen_rewards = (policy_chosen_logps - reference_chosen_logps) * beta
+            rejected_rewards = (policy_rejected_logps - reference_rejected_logps) * beta
             losses = (
                 -log_pref_prob(chosen_rewards)
                 - 0.5 * log_pref_prob(-chosen_rewards)
@@ -479,8 +575,8 @@ class CustomDPOTrainer(DPOTrainer):
             delta = chosen_logratios_sorted - rejected_logratios_sorted
 
             losses = (
-                -log_pref_prob(self.beta * delta) * (1 - self.label_smoothing)
-                - log_pref_prob(-self.beta * delta) * self.label_smoothing
+                -log_pref_prob(beta * delta) * (1 - self.label_smoothing)
+                - log_pref_prob(-beta * delta) * self.label_smoothing
             )
 
         elif self.loss_type == "aot":
@@ -493,8 +589,8 @@ class CustomDPOTrainer(DPOTrainer):
             delta = pi_logratios_sorted - ref_logratios_sorted
 
             losses = (
-                -log_pref_prob(self.beta * delta) * (1 - self.label_smoothing)
-                - log_pref_prob(-self.beta * delta) * self.label_smoothing
+                -log_pref_prob(beta * delta) * (1 - self.label_smoothing)
+                - log_pref_prob(-beta * delta) * self.label_smoothing
             )
 
         else:
@@ -503,13 +599,13 @@ class CustomDPOTrainer(DPOTrainer):
             )
 
         chosen_rewards = (
-            self.beta
+            beta
             * (
                 policy_chosen_logps.to(self.accelerator.device) - reference_chosen_logps.to(self.accelerator.device)
             ).detach()
         )
         rejected_rewards = (
-            self.beta
+            beta
             * (
                 policy_rejected_logps.to(self.accelerator.device)
                 - reference_rejected_logps.to(self.accelerator.device)
@@ -517,3 +613,38 @@ class CustomDPOTrainer(DPOTrainer):
         )
 
         return losses, chosen_rewards, rejected_rewards
+
+
+    def get_prompt_lengths(self, batch: dict[str, "torch.Tensor"]) -> torch.Tensor:
+        """
+        计算batch中每个样本的prompt长度
+        
+        在DPO/LEDPO训练中，batch包含成对的样本(chosen和rejected)
+        标签中IGNORE_INDEX表示prompt部分
+        
+        返回: [batch_size//2] 形状的张量，只包含chosen样本的prompt长度
+        """
+        # DPO batch中结构: [chosen_1, ..., chosen_n, rejected_1, ..., rejected_n]
+        # 为了正确找到prompt长度，我们只需要处理chosen部分
+        
+        # 获取batch总大小并计算单侧大小(chosen或rejected部分)
+        total_batch_size = batch["input_ids"].size(0)
+        batch_size = total_batch_size // 2  # 每侧的样本数
+        
+        # 只获取chosen部分
+        chosen_labels = batch["labels"][:batch_size]  # [batch_size, seq_len]
+        chosen_input_ids = batch["input_ids"][:batch_size]  # [batch_size, seq_len]
+        
+        # 创建prompt掩码: True表示prompt部分
+        prompt_mask = (chosen_labels == IGNORE_INDEX)  # [batch_size, seq_len]
+        
+        # 排除padding位置 (padding token通常是0)
+        valid_tokens_mask = (chosen_input_ids != self.padding_value) & prompt_mask
+        
+        # 计算每个序列中有效prompt token的数量
+        prompt_lengths = valid_tokens_mask.sum(dim=1)
+        
+        # 确保长度至少为1 (避免边缘情况)
+        prompt_lengths = torch.maximum(prompt_lengths, torch.ones_like(prompt_lengths))
+        
+        return prompt_lengths
