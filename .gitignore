@@ -177,3 +177,4 @@ wandb/
 swanlog/
 generated_predictions.jsonl
 results/
+temp*

@@ -1,5 +1,5 @@
 # 运行命令
-# python xdpo/run_demo.py --config xdpo/demo.yaml
+# python xdpo/run_demo.py --config xdpo/config_1.yaml --wandb_project xdpo_demo
 
 ### 定制参数
 use_dynamic_beta: false
@@ -24,7 +24,7 @@ pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 4
 learning_rate: 1.0e-4
-num_train_epochs: 3.0
+num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true  # 使用bf16精度
@@ -37,13 +37,13 @@ dataset: dpo_en_demo
 dataset_dir: data
 template: qwen
 cutoff_len: 512  # 对于小模型使用较小的上下文长度
-max_samples: 100
+max_samples: 200
 overwrite_cache: true
 preprocessing_num_workers: 1 
 dataloader_num_workers: 2
 
 ### output
-output_dir: results/qwen15-0.5b/lora/ledpo_demo
+output_dir: results/qwen15-0.5b/lora/config_1
 logging_steps: 5
 save_steps: 100
 plot_loss: true

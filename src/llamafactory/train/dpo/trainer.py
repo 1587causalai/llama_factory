@@ -101,7 +101,7 @@ def compute_pref_probs(logits: torch.FloatTensor, beta: torch.FloatTensor | floa
     if disco_pref:
         # disco-DPO: p(y_w > y_l) = 1/2 * (1 + erf((β * logits)/√2))
         scaled_logits = beta * logits  # 广播机制自动处理标量或张量
-        pref_probs = 0.5 * (1 + torch.erf(scaled_logits / math.sqrt(2)))
+        pref_probs = 0.5 * (1 + torch.erf(0.01 * scaled_logits / math.sqrt(2))) # 很容易数值溢出, 所以乘以 0.01
     else:
         # Standard DPO: p(y_w > y_l) = sigmoid(β * logits)
         pref_probs = torch.sigmoid(beta * logits)  # 广播机制自动处理标量或张量
