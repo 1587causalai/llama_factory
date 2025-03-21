@@ -147,6 +147,8 @@ class CustomDPOTrainer(DPOTrainer):
         self.ftx_gamma = finetuning_args.pref_ftx
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
+
+        # customized params for dpo variants
         self.use_dynamic_beta = finetuning_args.use_dynamic_beta
         self.disco_pref = finetuning_args.disco_pref
 
