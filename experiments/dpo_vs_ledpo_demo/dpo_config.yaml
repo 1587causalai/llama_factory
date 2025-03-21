@@ -1,0 +1,49 @@
+# 标准DPO配置
+# 路径相对于项目根目录
+
+# 基础模型配置
+model_name_or_path: /root/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+# 训练方法
+stage: foodpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1  # 固定beta值
+pref_loss: sigmoid
+
+# 训练参数
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+# 数据集配置
+dataset: dpo_en_demo
+dataset_dir: data
+template: qwen
+cutoff_len: 512
+overwrite_cache: true
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+# 输出配置
+output_dir: experiments/dpo_vs_ledpo_demo/results/dpo
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: [wandb]
+
+# 评估配置
+eval_dataset: dpo_zh_demo
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 5 

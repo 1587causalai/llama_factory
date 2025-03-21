@@ -1,12 +1,16 @@
 # llamafactory-cli train ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 # python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
-# python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_demo2
+# python ledpo_progressive_dev/run_train_and_plot.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml --wandb_project ledpo_demo3
 # python ledpo_progressive_dev/run_with_monitor.py --config ledpo_progressive_dev/qwen15_lora_foodpo.yaml
 
 ### model
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
 # ref_model: /root/models/Qwen1.5-0.5B-Chat
+# freeze_policy: true  # 启用策略模型冻结，只训练beta_head
+
+#### dynamic beta
+use_dynamic_beta: true
 
 ### method
 stage: foodpo
@@ -14,17 +18,14 @@ do_train: true
 finetuning_type: lora
 lora_rank: 8
 lora_target: all
-pref_beta: 0.1
+pref_beta: 0.7
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
-
-#### dynamic beta
-use_dynamic_beta: true
 
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 4
 learning_rate: 1.0e-4
-num_train_epochs: 1.0
+num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true  # 使用bf16精度
@@ -43,7 +44,7 @@ preprocessing_num_workers: 4
 dataloader_num_workers: 2
 
 ### output
-output_dir: results/qwen15-0.5b/lora/foodpo_demo
+output_dir: results/qwen15-0.5b/lora/ledpo_demo
 logging_steps: 5
 save_steps: 100
 plot_loss: true
@@ -54,7 +55,7 @@ report_to: [wandb]
 ### eval
 eval_dataset: dpo_zh_demo
 # val_size: 0.1
-per_device_eval_batch_size: 2
+per_device_eval_batch_size: 4
 eval_strategy: steps
 eval_steps: 5 
 

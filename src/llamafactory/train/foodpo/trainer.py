@@ -456,11 +456,13 @@ class CustomFooDPOTrainer(DPOTrainer):
         
         # 添加 beta 相关指标
         metrics[f"{prefix}beta/mean"] = beta_values.mean().item()
-        # 添加pos_beta和neg_beta指标
-        if hasattr(self, "current_pos_beta") and self.current_pos_beta is not None: 
-            metrics[f"{prefix}pos_beta"] = self.current_pos_beta.mean().item()
-        if hasattr(self, "current_neg_beta") and self.current_neg_beta is not None:
-            metrics[f"{prefix}neg_beta"] = self.current_neg_beta.mean().item()
+
+        if train_eval == "eval":
+            # 添加pos_beta和neg_beta指标
+            if hasattr(self, "current_pos_beta") and self.current_pos_beta is not None: 
+                metrics[f"{prefix}pos_beta"] = self.current_pos_beta.mean().item()
+            if hasattr(self, "current_neg_beta") and self.current_neg_beta is not None:
+                metrics[f"{prefix}neg_beta"] = self.current_neg_beta.mean().item()
         
         
         if self.loss_type == "orpo":

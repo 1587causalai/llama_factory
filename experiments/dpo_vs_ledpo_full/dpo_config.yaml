@@ -1,0 +1,54 @@
+# llamafactory-cli train experiments/dpo_vs_ledpo_full/dpo_config.yaml
+# 标准DPO配置，基于exp_baseline.yaml的最小改动
+
+### model
+model_name_or_path: /root/models/Qwen1.5-0.5B
+trust_remote_code: true
+
+### method
+stage: foodpo
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
+
+#### dynamic beta - 关闭动态beta特性
+use_dynamic_beta: false
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### dataset
+dataset: hh_rlhf_en  # 使用完整的Anthropic Helpful-Harmless数据集
+dataset_dir: data
+template: qwen
+cutoff_len: 1024
+max_samples: 1000
+overwrite_cache: true
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+### output
+output_dir: experiments/dpo_vs_ledpo_full/results/dpo
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: [wandb]
+
+### eval
+val_size: 0.2
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 5 

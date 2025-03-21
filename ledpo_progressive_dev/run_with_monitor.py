@@ -699,8 +699,9 @@ def main():
     args = parser.parse_args()
 
     # --config 如果为空, 选择默认配置
+    default_config = 'ledpo_progressive_dev/qwen15_lora_foodpo.yaml'
     if args.config is None:
-        args.config = 'ledpo_progressive_dev/qwen15_lora_foodpo.yaml'
+        args.config = default_config
     
     # 运行训练并监控
     print(f"正在运行训练并监控...")
