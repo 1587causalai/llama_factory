@@ -17,7 +17,7 @@ do_train: true
 finetuning_type: lora
 lora_rank: 8
 lora_target: all
-pref_beta: 0.7
+pref_beta: 0.1
 pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
 
 ### train
@@ -33,17 +33,17 @@ resume_from_checkpoint: null
 
 
 ### dataset
-dataset: dpo_en_demo
+dataset: hh_rlhf_en
 dataset_dir: data
 template: qwen
-cutoff_len: 512  # 对于小模型使用较小的上下文长度
-max_samples: 200
+cutoff_len: 512
+max_samples: 1000
 overwrite_cache: true
 preprocessing_num_workers: 1 
 dataloader_num_workers: 2
 
 ### output
-output_dir: results/qwen15-0.5b/lora/config_4
+output_dir: results/qwen15-0.5b/lora/config_4_20250322_100919
 logging_steps: 5
 save_steps: 100
 plot_loss: true
@@ -52,7 +52,7 @@ save_only_model: false
 report_to: [wandb]
 
 ### eval
-eval_dataset: dpo_zh_demo
+eval_dataset: hh_rlhf_en
 # val_size: 0.1
 per_device_eval_batch_size: 4
 eval_strategy: steps

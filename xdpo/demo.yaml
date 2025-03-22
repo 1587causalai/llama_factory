@@ -1,8 +1,8 @@
 # 运行命令
-# python xdpo/run_demo.py --config xdpo/demo.yaml
+# python xdpo/run_demo.py --config xdpo/demo.yaml --wandb_project xdpo_demo
 
 ### 定制参数
-use_dynamic_beta: false
+use_dynamic_beta: true
 disco_pref: false
 
 ### model

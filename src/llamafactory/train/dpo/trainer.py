@@ -154,7 +154,6 @@ class CustomDPOTrainer(DPOTrainer):
         self.use_dynamic_beta = finetuning_args.use_dynamic_beta
         self.disco_pref = finetuning_args.disco_pref
 
-
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
         if not hasattr(self, "accelerator"):
@@ -186,6 +185,8 @@ class CustomDPOTrainer(DPOTrainer):
                 hidden_size=model.config.hidden_size,
                 beta_base=self.beta
             ).to(self.accelerator.device)
+            self.beta_pos_delta = []
+            self.beta_neg_delta = []
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
@@ -415,17 +416,22 @@ class CustomDPOTrainer(DPOTrainer):
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
+        
+        metrics[f"{prefix}beta"] = beta_values.mean().item() if self.use_dynamic_beta else self.beta
 
         if self.use_dynamic_beta:
-            metrics[f"{prefix}beta"] = beta_values.mean().item()
             delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
             metrics[f"{prefix}delta"] = delta.mean().item()
-            pos_delta_beta = beta_values[delta > 0]
-            neg_delta_beta = beta_values[delta <= 0]
+            beta_pos_delta = beta_values[delta > 0]
+            beta_neg_delta = beta_values[delta <= 0]
             # 一个batch 太小, 很容易为空, 我也不知道填充一个什么样的值比较好, 所以就填充一个平均值.
-            fill_value = beta_values.mean().item()
-            metrics[f"{prefix}beta_pos_delta"] = pos_delta_beta.mean().item() if pos_delta_beta.numel() > 0 else fill_value
-            metrics[f"{prefix}beta_neg_delta"] = neg_delta_beta.mean().item() if neg_delta_beta.numel() > 0 else fill_value
+            # fill_value = beta_values.mean().item()
+            # metrics[f"{prefix}beta_pos_delta"] = pos_delta_beta.mean().item() if pos_delta_beta.numel() > 0 else fill_value
+            # metrics[f"{prefix}beta_neg_delta"] = neg_delta_beta.mean().item() if neg_delta_beta.numel() > 0 else fill_value
+            if beta_pos_delta.numel() > 0:
+                self.beta_pos_delta.append(beta_pos_delta.mean().item())
+            if beta_neg_delta.numel() > 0:
+                self.beta_neg_delta.append(beta_neg_delta.mean().item())
 
         return losses.mean(), metrics
 

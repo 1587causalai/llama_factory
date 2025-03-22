@@ -12,6 +12,8 @@ import os
 import sys
 import yaml
 import torch
+import matplotlib.pyplot as plt
+import numpy as np
 from transformers.trainer_callback import TrainerCallback
 from llamafactory.hparams import get_train_args
 from llamafactory.model import load_model, load_tokenizer
@@ -125,8 +127,22 @@ def run_with_dpo_variants(config_path, wandb_project=None):
     train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     
     if hasattr(trainer, "beta_head"):
-        print("训练后beta_head参数:")
+        print("训练后beta_head参数指标:")
+        # 计算beta_pos_delta 和 beta_neg_delta 的平均值
+        beta_pos_delta_avg = np.mean(trainer.beta_pos_delta)
+        beta_neg_delta_avg = np.mean(trainer.beta_neg_delta)
+        print(f"beta_pos_delta 平均值: {beta_pos_delta_avg}")
+        print(f"beta_neg_delta 平均值: {beta_neg_delta_avg}")
     
+        # plot beta_pos_delta 和 beta_neg_delta
+        plt.figure(figsize=(10, 5))
+        plt.plot(trainer.beta_pos_delta, label='beta_pos_delta')
+        plt.plot(trainer.beta_neg_delta, label='beta_neg_delta')
+        plt.legend()
+        plt.savefig(os.path.join(training_args.output_dir, "beta_delta.png"))
+        plt.close()
+        print(f"beta_delta.png 已保存至: {training_args.output_dir}")
+
     print("保存模型...")
     try:
         trainer.save_model()
