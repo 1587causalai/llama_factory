@@ -87,8 +87,8 @@ DATASET="hh_rlhf_en" # dpo_en_demo, dpo_zh_demo
 # EVAL_DATASET="hh_rlhf_en"   
 EPOCHS=1.0
 MODEL_PATH="/root/models/Qwen1.5-0.5B"
-# WANDB_PROJECT="xdpo_demo"
-OUTPUT_DIR_BASE="results/qwen_check"
+WANDB_PROJECT="xdpo_check"
+OUTPUT_DIR_BASE="results/xdpo_check"
 
 
 # 新增控制参数

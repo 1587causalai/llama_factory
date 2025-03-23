@@ -24,8 +24,10 @@ from typing import TYPE_CHECKING, Literal, Optional, Union, Tuple
 from enum import Enum
 
 
+
 import torch
 import torch.nn.functional as F
+from torch.distributions import Normal
 from transformers import Trainer
 from trl import DPOTrainer
 from trl.trainer import disable_dropout_in_model
@@ -83,7 +85,7 @@ def cap_exp(value, cap=-1):
 
 def compute_pref_probs(logits: torch.FloatTensor, beta: torch.FloatTensor | float, disco_pref: bool = False) -> torch.FloatTensor:
     """
-    Compute the preference probabilities for a given logits and beta.
+    Compute the preference probabilities for a given logits and beta.  (后续计算数值稳定性考虑, 不用于计算 loss)
 
     Args:
         logits: Tensor of log probability ratios or reward differences. Shape: (batch_size,)
@@ -107,6 +109,43 @@ def compute_pref_probs(logits: torch.FloatTensor, beta: torch.FloatTensor | floa
         pref_probs = torch.sigmoid(beta * logits)  # 广播机制自动处理标量或张量
     
     return pref_probs
+
+
+def compute_log_pref_prob_customized(logits: torch.FloatTensor, beta: torch.FloatTensor | float, disco_pref: bool = False) -> torch.FloatTensor:
+    """
+    Compute the log preference probabilities for given logits and beta, avoiding numerical overflow.
+
+    Args:
+        logits: Tensor of log probability ratios or reward differences. Shape: (batch_size,)
+        beta: Temperature parameter for scaling the logits. Can be a scalar (float) or a tensor with the same shape as logits.
+        disco_pref: If True, use disco-DPO log preference probability with normal distribution assumption;
+                   if False, use standard DPO log sigmoid preference probability. (default: False)
+
+
+        要防止数值溢出，可以通过数学上的渐近展开，用解析近似替代直接计算。这种方法确保在极值区域内，结果保持有限且稳定，避免超出计算机的数值范围。更多内容请参考 https://grok.com/share/bGVnYWN5_7bfa15cf-9ed8-4be3-99e1-453d3f08305c
+
+        当 \(x\) 很负时，\(\Phi(x)\)（正态分布 CDF）会变得极小，直接算 \(\log(\Phi(x))\) 容易下溢为 \(-inf\)。为避免溢出，可以用近似公式：
+
+        \[
+        \log(\Phi(x)) \approx -\frac{x^2}{2} - \frac{1}{2} \log(2\pi) - \log(-x)
+        \]
+
+        这个公式通过数学推导，把极小值转化为几个有限项的组合，避免直接计算 \(\Phi(x)\)。核心是：**用稳定的数学近似绕过浮点数限制**，既简单又有效。
+
+    Returns:
+        Tensor of log preference probabilities. Shape: (batch_size,)
+    """
+    # 确保 beta 和 logits 的维度兼容
+    if isinstance(beta, torch.Tensor) and beta.shape != logits.shape:
+        raise ValueError(f"beta tensor shape {beta.shape} must match logits shape {logits.shape}")
+
+    if disco_pref:
+        # disco-DPO: log(p(y_w > y_l)) = log(Φ(0.6 * β * logits / √2))
+        scaled_logits = 0.6 * beta * logits / math.sqrt(2)
+        return torch.special.log_ndtr(scaled_logits)  
+    else:
+        # Standard DPO: log(p(y_w > y_l)) = logsigmoid(β * logits)
+        return torch.nn.functional.logsigmoid(beta * logits)
 
 
 class CustomDPOTrainer(DPOTrainer):
@@ -279,7 +318,8 @@ class CustomDPOTrainer(DPOTrainer):
         beta_values: Optional["torch.Tensor"] = None
     ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
         r"""Compute loss for preference learning."""
-        
+        delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
+
         if not self.finetuning_args.use_ref_model:
             if self.loss_type == "orpo":
                 losses = self.odds_ratio_loss(policy_chosen_logps, policy_rejected_logps, beta_values)
@@ -295,6 +335,15 @@ class CustomDPOTrainer(DPOTrainer):
             losses, chosen_rewards, rejected_rewards = self.dpo_loss(
                 policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, beta_values
             )
+
+        delta_pos_mask = delta > 0
+        delta_neg_mask = delta <= 0
+
+        if delta_neg_mask.sum() > 0:
+            debug_loss = delta_neg_mask * losses
+        else:
+            debug_loss = delta_pos_mask * losses
+
 
         return losses, chosen_rewards, rejected_rewards
 
@@ -400,6 +449,9 @@ class CustomDPOTrainer(DPOTrainer):
             reference_rejected_logps,
             beta_values,
         )
+
+        # print(f"losses: {losses}")
+
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
             losses += self.ftx_gamma * sft_loss
@@ -499,11 +551,16 @@ class CustomDPOTrainer(DPOTrainer):
 
         beta = beta_values if beta_values is not None else self.beta
 
-        def log_pref_prob(logits, beta):
+        def log_pref_prob(logits, beta=1.0):
+            """
+            计算偏好概率的对数
+
+            beta 是偏好概率的参数, 默认是1.0, 这里有个非常好的技巧 log_pref_prob(logits, beta) 和 log_pref_prob(logits * beta, 1.0) 是等价的.
+            """
             if self.disco_pref:
-                return torch.log(compute_pref_probs(logits, beta, True))
+                return compute_log_pref_prob_customized(logits, beta, True)
             else:
-                return torch.log(compute_pref_probs(logits, beta, False))
+                return compute_log_pref_prob_customized(logits, beta, False)
 
         if self.f_divergence_type == FDivergenceType.ALPHA_DIVERGENCE.value:
             alpha_coef = FDivergenceConstants.ALPHA_DIVERGENCE_COEF_DEFAULT
@@ -555,9 +612,7 @@ class CustomDPOTrainer(DPOTrainer):
             self.running.update(rewards)
             delta = self.running.mean
 
-            losses = -log_pref_prob((beta * chosen_logratios) - delta) - log_pref_prob(
-                -(beta * rejected_logratios - delta)
-            )
+            losses = -log_pref_prob((beta * chosen_logratios) - delta) - log_pref_prob(-(beta * rejected_logratios - delta))
         elif self.loss_type == "sppo_hard":
             a = policy_chosen_logps - reference_chosen_logps
             b = policy_rejected_logps - reference_rejected_logps

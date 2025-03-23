@@ -31,7 +31,7 @@ class HiddenStateBetaHead(nn.Module):
         self.max_beta = max_beta
         
         if projection_dim is None:
-            projection_dim = hidden_size
+            # projection_dim = hidden_size
             projection_dim = 128
 
 
@@ -39,10 +39,9 @@ class HiddenStateBetaHead(nn.Module):
         layers = [
             nn.Linear(hidden_size, projection_dim),
             nn.GELU(),
-            # nn.Linear(projection_dim, projection_dim // 2),
-            # nn.GELU(),
-            # nn.Linear(projection_dim // 2, 1),
-            nn.Linear(projection_dim, 1),
+            nn.Linear(projection_dim, projection_dim // 2),
+            nn.GELU(),
+            nn.Linear(projection_dim // 2, 1),
             nn.Softplus()  # 确保输出非负
         ]
         

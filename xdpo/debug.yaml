@@ -1,14 +1,14 @@
 # 运行命令
-# python xdpo/run_demo.py --config xdpo/demo.yaml --wandb_project xdpo_demo
+# python xdpo/run_demo.py --config xdpo/debug.yaml --wandb_project xdpo_debug
 
 ### 定制参数
-use_dynamic_beta: true
-disco_pref: false
+# use_dynamic_beta: false
+disco_pref: true
 
 ### model
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
-# ref_model: /root/models/Qwen1.5-0.5B-Chat
+ref_model: /root/models/Qwen1.5-0.5B-Chat # 非常有意思, 只要使用这个方式就会出现数值溢出, dpo 也会出问题
 # freeze_policy: true  # 启用策略模型冻结，只训练beta_head
 
 ### method
@@ -23,8 +23,8 @@ pref_loss: sigmoid  # choices: [sigmoid (dpo), orpo, simpo]
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 4
-learning_rate: 1.0e-4
-num_train_epochs: 1.0
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true  # 使用bf16精度
@@ -33,18 +33,18 @@ resume_from_checkpoint: null
 
 
 ### dataset
-dataset: dpo_en_demo
+dataset: hh_rlhf_en
 dataset_dir: data
 template: qwen
 cutoff_len: 512  # 对于小模型使用较小的上下文长度
-max_samples: 400
+max_samples: 100
 overwrite_cache: true
 preprocessing_num_workers: 1 
 dataloader_num_workers: 2
 
 ### output
-output_dir: results/qwen15-0.5b/lora/ledpo_demo
-logging_steps: 5
+output_dir: results/qwen/debug
+logging_steps: 1
 save_steps: 100
 plot_loss: true
 overwrite_output_dir: true
@@ -52,8 +52,8 @@ save_only_model: false
 report_to: [wandb]
 
 ### eval
-eval_dataset: dpo_zh_demo
-# val_size: 0.1
+# eval_dataset: dpo_zh_demo
+val_size: 0.2
 per_device_eval_batch_size: 4
 eval_strategy: steps
-eval_steps: 5 
+eval_steps: 1 

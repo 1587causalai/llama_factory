@@ -54,10 +54,10 @@ def run_with_dpo_variants(config_path, wandb_project=None):
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
 
     # 确认自定义参数
-    if finetuning_args.use_dynamic_beta:
-        print("使用动态beta")
-    if finetuning_args.disco_pref:
-        print("使用disco偏好概率")  
+    # if finetuning_args.use_dynamic_beta:
+    #     print("使用动态beta")
+    # if finetuning_args.disco_pref:
+    #     print("使用disco偏好概率")  
     
     os.makedirs(training_args.output_dir, exist_ok=True)
     training_args.remove_unused_columns = False
@@ -165,3 +165,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

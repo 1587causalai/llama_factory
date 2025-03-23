@@ -80,14 +80,14 @@
 
 # 定义默认参数
 USE_TIMESTAMP=false
-MAX_SAMPLES=1800
+MAX_SAMPLES=1000
 DATASET="hh_rlhf_en" # dpo_en_demo, dpo_zh_demo
 # EVAL_DATASET="hh_rlhf_en"   
 EPOCHS=1.0
 MODEL_PATH="/root/models/Qwen1.5-0.5B"
 # WANDB_PROJECT="xdpo_demo"
-WANDB_PROJECT="qwen_xdpo_disco_vs_base_pref"
-OUTPUT_DIR_BASE="results/qwen_disco_vs_base_pref"
+WANDB_PROJECT="xdpo_baseline_qwen0.5b"
+OUTPUT_DIR_BASE="results/dpo_baseline_qwen0.5b"
 
 # 新增控制参数
 PREF_BETA=0.7
@@ -98,7 +98,7 @@ LORA_RANK=8
 CUTOFF_LEN=1024
 WARMUP_RATIO=0.1
 LOGGING_STEPS=5
-SAVE_STEPS=100
+SAVE_STEPS=200
 
 # 保存原始命令行参数，用于记录
 ORIGINAL_ARGS="$*"
@@ -613,10 +613,10 @@ done
 
 echo "所有实验已完成！"
 echo "实验结果保存在: $EXPERIMENT_DIR"
-echo "可通过README.md查看实验详情和重现命令。"
+echo "可通过 ${EXPERIMENT_DIR}/README.md 查看实验详情和重现命令。"
 
 # 在统一实验目录创建说明文件
-cat > "${EXPERIMENT_DIR}/README.md" << EOF
+cat > "${EXPERIMENT_DIR}/README.md " << EOF
 # DPO实验组合 - $(date '+%Y-%m-%d %H:%M:%S')
 
 ## 实验概述
