@@ -51,7 +51,7 @@
 # -e, --eval NAME         设置评估数据集
 # -p, --epochs NUM        设置训练轮数
 # -m, --model PATH        设置模型路径
-# -w, --wandb NAME        设置wandb项目名称
+# -w, --wandb NAME        设置wandb项目名称并启用wandb报告
 # -b, --beta NUM          设置pref_beta值
 # -l, --lr NUM            设置学习率
 # --batch NUM             设置训练批量大小
@@ -62,7 +62,7 @@
 # --log-steps NUM         设置日志记录步数
 # --save-steps NUM        设置模型保存步数
 # --output-dir PATH       设置输出目录的基础路径
-# -t, --timestamp         启用时间戳（防止实验结果覆盖）
+# -t, --timestamp         启用时间戳（防止实验结果覆盖，默认关闭）
 # --compare-models        运行Qwen1.5-0.5B和Qwen2.5-1.5B-Instruct的对比实验
 # --dynamic-beta          只运行use_dynamic_beta=true的实验（实验3和4）
 # --static-beta           只运行use_dynamic_beta=false的实验（实验1和2）
@@ -78,26 +78,28 @@
 # 实验4：use_dynamic_beta=true, disco_pref=true (动态Beta Disco-DPO)
 # ===================================================
 
-# 定义默认参数
 USE_TIMESTAMP=false
-MAX_SAMPLES=1800
+USE_WANDB=false
+
+# 定义默认参数
+MAX_SAMPLES=50
 DATASET="hh_rlhf_en" # dpo_en_demo, dpo_zh_demo
 # EVAL_DATASET="hh_rlhf_en"   
 EPOCHS=1.0
 MODEL_PATH="/root/models/Qwen1.5-0.5B"
 # WANDB_PROJECT="xdpo_demo"
-WANDB_PROJECT="qwen_xdpo_disco_vs_base_pref"
-OUTPUT_DIR_BASE="results/qwen_disco_vs_base_pref"
+OUTPUT_DIR_BASE="results/qwen_check"
+
 
 # 新增控制参数
 PREF_BETA=0.7
 LEARNING_RATE=1.0e-4
 BATCH_SIZE=2
 GRAD_ACCUM_STEPS=4
-LORA_RANK=8
-CUTOFF_LEN=1024
-WARMUP_RATIO=0.1
-LOGGING_STEPS=5
+LORA_RANK=4            # 减少LoRA参数加快训练
+CUTOFF_LEN=512         # 减少上下文长度加快训练
+WARMUP_RATIO=0.0       # 去掉预热阶段加快训练
+LOGGING_STEPS=1
 SAVE_STEPS=100
 
 # 保存原始命令行参数，用于记录
@@ -115,7 +117,7 @@ function show_help {
     echo "  -e, --eval NAME         设置评估数据集 (默认: $EVAL_DATASET)"
     echo "  -p, --epochs NUM        设置训练轮数 (默认: $EPOCHS)"
     echo "  -m, --model PATH        设置模型路径 (默认: $MODEL_PATH)"
-    echo "  -w, --wandb NAME        设置wandb项目名称 (默认: $WANDB_PROJECT)"
+    echo "  -w, --wandb NAME        设置wandb项目名称并启用wandb报告"
     echo "  -b, --beta NUM          设置pref_beta值 (默认: $PREF_BETA)"
     echo "  -l, --lr NUM            设置学习率 (默认: $LEARNING_RATE)"
     echo "  --batch NUM             设置训练批量大小 (默认: $BATCH_SIZE)"
@@ -126,7 +128,7 @@ function show_help {
     echo "  --log-steps NUM         设置日志记录步数 (默认: $LOGGING_STEPS)"
     echo "  --save-steps NUM        设置模型保存步数 (默认: $SAVE_STEPS)"
     echo "  --output-dir PATH       设置输出目录的基础路径 (默认: $OUTPUT_DIR_BASE)"
-    echo "  -t, --timestamp         启用时间戳（防止实验结果覆盖）"
+    echo "  -t, --timestamp         启用时间戳（防止实验结果覆盖，默认关闭）"
     echo "  --compare-models        运行Qwen1.5-0.5B和Qwen2.5-1.5B-Instruct的对比实验"
     echo "  --dynamic-beta          只运行use_dynamic_beta=true的实验"
     echo "  --static-beta           只运行use_dynamic_beta=false的实验"
@@ -165,6 +167,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -w|--wandb)
             WANDB_PROJECT="$2"
+            USE_WANDB=true
             shift 2
             ;;
         -b|--beta)
@@ -326,6 +329,17 @@ update_config() {
     sed -i "s|output_dir:.*|output_dir: $config_dir|g" $new_config_file
     sed -i "s|overwrite_output_dir:.*|overwrite_output_dir: true|g" $new_config_file
     
+    # 设置wandb报告
+    if [[ "$USE_WANDB" = false ]]; then
+        # 检查是否已有report_to行
+        if grep -q "report_to:" $new_config_file; then
+            sed -i "s|report_to:.*|report_to: none|g" $new_config_file
+        else
+            # 在适当位置添加report_to行
+            sed -i '/output_dir:.*/a report_to: none' $new_config_file
+        fi
+    fi
+    
     # 创建README.md文件，记录实验信息
     cat > "${config_dir}/README.md" << EOF
 # 实验 ${config_num} 配置信息
@@ -434,9 +448,24 @@ run_model_for_config() {
     sed -i "s|output_dir:.*|output_dir: $model_output_dir|g" $config_file
     sed -i "s|overwrite_output_dir:.*|overwrite_output_dir: true|g" $config_file
     
+    # 设置wandb报告
+    if [[ "$USE_WANDB" = false ]]; then
+        # 检查是否已有report_to行
+        if grep -q "report_to:" $config_file; then
+            sed -i "s|report_to:.*|report_to: none|g" $config_file
+        else
+            # 在适当位置添加report_to行
+            sed -i '/output_dir:.*/a report_to: none' $config_file
+        fi
+    fi
+    
     # 运行实验
     echo "开始运行实验..."
-    python xdpo/run_demo.py --config "$config_file" --wandb_project "$WANDB_PROJECT"
+    if [[ "$USE_WANDB" = true ]]; then
+        python xdpo/run_demo.py --config "$config_file" --wandb_project "$WANDB_PROJECT"
+    else
+        python xdpo/run_demo.py --config "$config_file"
+    fi
     
     echo "模型 $model_name 在配置${config_num}下的实验完成"
     echo ""
@@ -580,7 +609,11 @@ for exp_num in "${experiments_to_run[@]}"; do
             echo "======================================"
             echo "运行实验1: use_dynamic_beta=false, disco_pref=false"
             echo "======================================"
-            python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            if [[ "$USE_WANDB" = true ]]; then
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            else
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}"
+            fi
             echo "实验1完成"
             echo ""
             ;;
@@ -588,7 +621,11 @@ for exp_num in "${experiments_to_run[@]}"; do
             echo "======================================"
             echo "运行实验2: use_dynamic_beta=false, disco_pref=true"
             echo "======================================"
-            python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            if [[ "$USE_WANDB" = true ]]; then
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            else
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}"
+            fi
             echo "实验2完成"
             echo ""
             ;;
@@ -596,7 +633,11 @@ for exp_num in "${experiments_to_run[@]}"; do
             echo "======================================"
             echo "运行实验3: use_dynamic_beta=true, disco_pref=false"
             echo "======================================"
-            python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            if [[ "$USE_WANDB" = true ]]; then
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            else
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}"
+            fi
             echo "实验3完成"
             echo ""
             ;;
@@ -604,7 +645,11 @@ for exp_num in "${experiments_to_run[@]}"; do
             echo "======================================"
             echo "运行实验4: use_dynamic_beta=true, disco_pref=true"
             echo "======================================"
-            python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            if [[ "$USE_WANDB" = true ]]; then
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}" --wandb_project $WANDB_PROJECT
+            else
+                python xdpo/run_demo.py --config "${CONFIG_FILES[$exp_num]}"
+            fi
             echo "实验4完成"
             echo ""
             ;;
@@ -613,7 +658,7 @@ done
 
 echo "所有实验已完成！"
 echo "实验结果保存在: $EXPERIMENT_DIR"
-echo "可通过README.md查看实验详情和重现命令。"
+echo "可通过 ${EXPERIMENT_DIR}/README.md 查看实验详情和重现命令。"
 
 # 在统一实验目录创建说明文件
 cat > "${EXPERIMENT_DIR}/README.md" << EOF
@@ -655,4 +700,4 @@ done)
 ## 实验时间
 实验开始时间: $(date '+%Y-%m-%d %H:%M:%S')
 实验结束时间: $(date '+%Y-%m-%d %H:%M:%S')
-EOF 
+EOF

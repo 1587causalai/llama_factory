@@ -20,7 +20,7 @@ for i, beta in enumerate(betas):
     p_original = 1 / (1 + np.exp(-beta * logits))
     
     # 计算改进后的偏好概率（erf）
-    p_new = 0.5 * (1 + erf(beta * logits / np.sqrt(2)))
+    p_new = 0.5 * (1 + erf(0.6 * beta * logits / np.sqrt(2)))  # 0.6 是经验值
     
     # 绘制曲线
     axes[i].plot(logits, p_original, label='Original DPO (sigmoid)', color='blue')
@@ -33,5 +33,5 @@ for i, beta in enumerate(betas):
 
 # 调整子图间距
 plt.tight_layout()
-
+# plt.show()
 plt.savefig('xdpo/imgs/disco_vs_sigmoid_pref_prob.png')

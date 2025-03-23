@@ -101,7 +101,7 @@ def compute_pref_probs(logits: torch.FloatTensor, beta: torch.FloatTensor | floa
     if disco_pref:
         # disco-DPO: p(y_w > y_l) = 1/2 * (1 + erf((β * logits)/√2))
         scaled_logits = beta * logits  # 广播机制自动处理标量或张量
-        pref_probs = 0.5 * (1 + torch.erf(0.01 * scaled_logits / math.sqrt(2))) # 很容易数值溢出, 所以乘以 0.01
+        pref_probs = 0.5 * (1 + torch.erf(0.6 * scaled_logits / math.sqrt(2))) # 很容易数值溢出, 所以乘以 0.01
     else:
         # Standard DPO: p(y_w > y_l) = sigmoid(β * logits)
         pref_probs = torch.sigmoid(beta * logits)  # 广播机制自动处理标量或张量
@@ -208,12 +208,12 @@ class CustomDPOTrainer(DPOTrainer):
                     print(f"[DEBUG]   {name}: shape={param.shape}, requires_grad={param.requires_grad}")
                 
                 # 为beta_head参数设置更高的学习率（例如，是基本学习率的10倍）
-                beta_head_lr = self.args.learning_rate * 10.0
-                
+                # beta_head_lr = self.args.learning_rate * 10.0  # 10倍
+                beta_head_lr = self.args.learning_rate * 0.3 # 慢一定更新, 不然会不小到了 beta -> 0 的局部最优解了. 
                 # 添加参数组
                 params_config = {
                     "params": beta_head_params,
-                    "lr": beta_head_lr,  # 使用更高的学习率
+                    "lr": beta_head_lr,  # 使用不同的学习率
                 }
                 
                 # 复制原优化器配置（除了学习率和参数）

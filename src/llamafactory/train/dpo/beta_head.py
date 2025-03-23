@@ -32,15 +32,17 @@ class HiddenStateBetaHead(nn.Module):
         
         if projection_dim is None:
             projection_dim = hidden_size
+            projection_dim = 128
 
 
         # 投影层+两层神经网络  
         layers = [
             nn.Linear(hidden_size, projection_dim),
             nn.GELU(),
-            nn.Linear(projection_dim, projection_dim // 2),
-            nn.GELU(),
-            nn.Linear(projection_dim // 2, 1),
+            # nn.Linear(projection_dim, projection_dim // 2),
+            # nn.GELU(),
+            # nn.Linear(projection_dim // 2, 1),
+            nn.Linear(projection_dim, 1),
             nn.Softplus()  # 确保输出非负
         ]
         

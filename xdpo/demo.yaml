@@ -8,7 +8,7 @@ disco_pref: false
 ### model
 model_name_or_path: /root/models/Qwen1.5-0.5B
 trust_remote_code: true
-# ref_model: /root/models/Qwen1.5-0.5B-Chat
+ref_model: /root/models/Qwen1.5-0.5B-Chat
 # freeze_policy: true  # 启用策略模型冻结，只训练beta_head
 
 ### method
