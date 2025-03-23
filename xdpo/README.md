@@ -10,3 +10,10 @@
 - `config_4.yaml`: 实验4的配置
 
 - `check.sh`: 最低配置的检查实验代码是否正确运行
+
+
+
+## 基础实验
+
+
+探索 pref_beta, learning_rate 等参数对模型性能的影响. 
