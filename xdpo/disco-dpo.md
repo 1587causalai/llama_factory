@@ -138,3 +138,20 @@ plt.tight_layout()
 
 plt.savefig('xdpo/imgs/disco_vs_sigmoid_pref_prob.png')
 ```
+
+## **惨痛教训**
+
+计算 $\log(P(y_w > y_l))$ 时, 使用 sigmoid 函数计算偏好概率, 会导致数值不稳定, 出现 NaN 值, 我们需要数值稳定性算法.
+
+
+
+当 \(x\) 很负时，\(\Phi(x)\)（正态分布 CDF）会变得极小，直接算 \(\log(\Phi(x))\) 容易下溢为 \(-\inf\)。为避免溢出，可以用近似公式：
+
+\[
+\log(\Phi(x)) \approx -\frac{x^2}{2} - \frac{1}{2} \log(2\pi) - \log(-x)
+\]
+
+这个公式通过数学推导，把极小值转化为几个有限项的组合，避免直接计算 \(\Phi(x)\)。核心是：**用稳定的数学近似绕过浮点数限制**，既简单又有效。
+
+
+标准 DPO 算法使用  F.logsigmoid 计算偏好概率损失, 解决数值不稳定, 我们的 disco-DPO 使用 torch.special.log_ndtr 计算偏好概率损失, 解决数值不稳定.

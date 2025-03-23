@@ -451,7 +451,6 @@ class CustomDPOTrainer(DPOTrainer):
         )
 
         # print(f"losses: {losses}")
-
         sft_loss = -policy_chosen_logps_avg
         if self.ftx_gamma > 1e-6:
             losses += self.ftx_gamma * sft_loss
@@ -470,10 +469,10 @@ class CustomDPOTrainer(DPOTrainer):
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
         
         metrics[f"{prefix}beta"] = beta_values.mean().item() if self.use_dynamic_beta else self.beta
+        delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
+        metrics[f"{prefix}delta"] = delta.mean().item()
 
         if self.use_dynamic_beta:
-            delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
-            metrics[f"{prefix}delta"] = delta.mean().item()
             beta_pos_delta = beta_values[delta > 0]
             beta_neg_delta = beta_values[delta <= 0]
             # 一个batch 太小, 很容易为空, 我也不知道填充一个什么样的值比较好, 所以就填充一个平均值.
