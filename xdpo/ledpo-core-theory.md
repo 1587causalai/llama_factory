@@ -2,6 +2,19 @@
 
 ## 1. 引言
 
+偏好对齐本质上是一个更新其过往经验和知识的问题: 
+
+> 当前经验 $\pi_{\text{ref}}$ 下, 如何自适应的融入奖励信息(假设我们有 ground truth), 得到一个最终策略 $\pi_\theta$ 是, 从而更好的拟合观测到的一些奖励偏好数据?
+
+其实我们这篇文章提出了一个观点: **大语言模型不应该仅仅是一个预测机器, 还应该额外决策是否应该探索还是利用。** 具体来说, 每个大语言模型有一个 BetaHead, 决定了某个 context 下, 应该偏向利用过往经验还是探索新知识. 
+
+另外一个非常有意思的观点是: 我们也是在学习如何自适应的解码策略, 比如 Top-K 策略, beta 越大, 越偏向利用过往经验, 减少 K 的值, 反之亦然. 我们的前面的观点其实也可以换一种说法, 大语言模型不应该仅仅只是next token prediction, 应该更加 end2end 一点, **是一个最大化奖励的 response 生成器, next token prediction 只是最大化奖励的 response 生成器的中间步骤.**
+
+Deepseek 的 MTP 是一种尝试, 我觉得不应该是如此拼凑感的方法, 我们的方法更加优雅, 可以理解成 response 粗粒度的 Token Prediction, 不再是多少 token 的预测, 而是是否应该探索还是利用的决策. 考虑极端情况. 
+
+
+
+
 ### 1.1 背景与动机
 
 Direct Preference Optimization (DPO) 作为一种直接优化语言模型以对齐人类偏好的新兴算法，因其简洁高效而备受关注。相较于传统强化学习方法，DPO 避免了复杂的奖励建模和策略迭代，通过直接比较模型对 chosen 和 rejected 样本的输出进行优化。然而，标准 DPO 采用固定的超参数 $\beta$ 来平衡参考策略和偏好学习，这限制了其在复杂场景下的优化潜力。
@@ -63,7 +76,7 @@ $$\mathcal{L}_{\text{DPO}}(\theta) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D
 
 因此我们希望 $\beta \to \beta(x; \pi_\theta)$ 是一个可以自适应探索和利用的平衡的参数.
 
-## 3. Learnable Beta DPO 数学模型
+## 3. Learnable Beta DPO 数学模型 (在策略模型上接入BetaHead)
 
 ### 3.1 动态 Beta 函数 $\beta(x; \pi_\theta)$
 
@@ -120,9 +133,35 @@ Learnable Beta DPO 采用联合训练策略模型 $\pi_\theta$、BetaHead 网络
 3. **梯度更新:**  反向传播梯度，同步更新策略模型 $\pi_\theta$、BetaHead 网络和 $w$ 的参数。
 4. **迭代训练:** 重复步骤 2-3 直至收敛。
 
-## 5. 理论分析与优势
 
-### 5.1 动态 Beta 的直觉解释：自适应探索-利用平衡
+
+## 5. 是否应该在策略模型上接入BetaHead
+
+我觉得逻辑上就不应该, 反而应该在参考模型 $\pi_{\text{ref}}$ 上接入BetaHead. 
+
+思路是这样的, 给定一个上下文 $x$, 参考模型会想应该是利用过往经验还是根据环境奖励进行探索? BetaHead 来做这个决定, 如果它认为我对当前的知识领域很熟悉, 那么就偏向利用过往经验, 反之则偏向探索. 一个最好的 BetaHead 作出的决策 
+$$\pi_{\text{ref}} \odot p_r(\cdot|x;\beta) = \pi_\theta$$ 
+应该最大化可能的奖励! 
+
+
+请注意, 信息融合算子的性质可以得到 $p_r(\cdot|x;\beta)  = \pi_\theta \odot \pi_\text{ref}^{-1}$, 所以可以有:
+$$r(x, y) =  \beta(x; \pi_\text{ref}) \log \frac{\pi_\theta(y|x)}{\pi_{\text{ref}}(y|x)}$$
+所以找到一个合适的策略模型数学上等价于找到一个合适的参考模型 BetaHead.  
+
+
+我们对称的思考, 对于观测到的一系列奖励 $r_1, r_2, \cdots, r_n$ 的相关信息(比如偏好信息), 我们希望 BetaHead 作出的决策, 更好的符合观测结果. 考虑到客观存在一个 ground truth 的奖励, 意思是连接 $\beta(x)$ 和策略 $\pi_\theta$ 的桥梁是固定,  所以找到合适的 BetaHead 等价于找到最优策略 $\pi(y|x)$. 
+> 此时此刻就回答到了一个问题, 你凭什么认为所有的 context $x$ 都是同一个 beta 值? 非常不合理. 
+
+
+我们强烈建议的做法是:
+
+- 在参考模型 $\pi_{\text{ref}}$ 上接入BetaHead 计算 $\beta(x; \pi_{\text{ref}})$
+- 通过策略模型 $\pi_\theta$ 和参考模型 $\pi_{\text{ref}}$ 的交互, 计算每个 response 的 $\log \frac{\pi_\theta(y|x)}{\pi_{\text{ref}}(y|x)}$
+- 最后代入到某个偏好学习损失函数, 最小化这个损失函数. 
+
+
+
+## 6. 总结与展望
 
 动态 $\beta(x; \pi_\theta)$ 的核心优势在于实现**上下文自适应的探索-利用平衡**。$\beta$ 值控制模型在参考策略和偏好信息之间的权衡：
 
@@ -133,9 +172,7 @@ Learnable Beta DPO 采用联合训练策略模型 $\pi_\theta$、BetaHead 网络
 
 1. **稳定性与灵活性兼顾:**  熟悉场景保持稳定，新颖场景保持灵活。
 2. **模型确定性感知:**  通过 $\mathrm{PPL}_{\pi_\theta}(x)$ 感知模型对输入的确定性程度。
-3. **细粒度上下文特征学习:** BetaHead 基于隐状态 $h_{\pi_\theta}(x)$ 学习更精细的上下文特征，实现更精准的 $\beta$ 调整。
-
-### 5.2 理论挑战与未来方向
+3. **细粒度上下文特征学习:** BetaHead 基于隐状态 $h_{\pi_\theta}(x)$ 学习更精细的上下文特征，实现更精准的 $\beta$ 调整。 d
 
 Learnable Beta DPO 虽具潜力，仍面临理论挑战和研究方向：
 
@@ -143,6 +180,5 @@ Learnable Beta DPO 虽具潜力，仍面临理论挑战和研究方向：
 * **理论分析:**  动态 $\beta$ 对 DPO 收敛性、稳定性、泛化性的影响尚需深入理论分析，并尝试证明其性能提升的理论依据。
 * **与其他动态 $\beta$ 方法比较:**  对比现有动态调整 DPO 中 $\beta$ 值的方法，分析 Learnable Beta DPO 的优劣势。
 
-## 6. 总结与展望
 
-Learnable Beta DPO 通过引入动态可学习的 $\beta(x; \pi_\theta)$ 函数，有效扩展了标准 DPO 算法。该函数结合可学习参数 $w$、困惑度 $\mathrm{PPL}(x)$ 和神经网络 $f(x)$，使 preference loss 能根据上下文自适应调整。动态 $\beta$ 方法有望提升 DPO 算法的灵活性、适应性和性能，是 DPO 研究的重要方向。未来研究可聚焦于更优 $\beta(x)$ 函数设计、深入理论分析和实验验证，进一步提升 Learnable Beta DPO 的性能和理论完备性。
+总之, Learnable Beta DPO 通过引入动态可学习的 $\beta(x; \pi_\theta)$ 函数，有效扩展了标准 DPO 算法。该函数结合可学习参数 $w$、困惑度 $\mathrm{PPL}(x)$ 和神经网络 $f(x)$，使 preference loss 能根据上下文自适应调整。动态 $\beta$ 方法有望提升 DPO 算法的灵活性、适应性和性能，是 DPO 研究的重要方向。未来研究可聚焦于更优 $\beta(x)$ 函数设计、深入理论分析和实验验证，进一步提升 Learnable Beta DPO 的性能和理论完备性。
