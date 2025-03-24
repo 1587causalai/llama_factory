@@ -81,18 +81,19 @@
 # 定义默认参数
 USE_TIMESTAMP=false
 MAX_SAMPLES=1000
-DATASET="hh_rlhf_en" # dpo_en_demo, dpo_zh_demo
+DATASET="orca_pairs" # dpo_en_demo, dpo_zh_demo,  hh_rlhf_en, ultrafeedback, dpo_mix_zh, dpo_mix_en, orca_pairs
 # EVAL_DATASET="hh_rlhf_en"   
 EPOCHS=1.0
 MODEL_PATH="/root/models/Qwen1.5-0.5B"
 # WANDB_PROJECT="xdpo_demo"
-WANDB_PROJECT="xdpo_pref_beta_exp"
-OUTPUT_DIR_BASE="results/dpo_baseline_qwen0.5b"
+WANDB_PROJECT="xdpo_baseline_qwen0.5b_datasets"
+OUTPUT_DIR_BASE="results/xdpo_baseline_qwen0.5b_orca_pairs"
 
 # 新增控制参数
-PREF_BETA=0.7
+PREF_BETA=0.5
 LEARNING_RATE=1.0e-4
 BATCH_SIZE=2
+EVAL_BATCH_SIZE=2
 GRAD_ACCUM_STEPS=4
 LORA_RANK=8
 CUTOFF_LEN=1024
@@ -119,6 +120,7 @@ function show_help {
     echo "  -b, --beta NUM          设置pref_beta值 (默认: $PREF_BETA)"
     echo "  -l, --lr NUM            设置学习率 (默认: $LEARNING_RATE)"
     echo "  --batch NUM             设置训练批量大小 (默认: $BATCH_SIZE)"
+    echo "  --eval-batch NUM        设置评估批量大小 (默认: $EVAL_BATCH_SIZE)"
     echo "  --grad-accum NUM        设置梯度累积步数 (默认: $GRAD_ACCUM_STEPS)"
     echo "  --lora-rank NUM         设置LoRA秩 (默认: $LORA_RANK)"
     echo "  --cutoff NUM            设置最大上下文长度 (默认: $CUTOFF_LEN)"
@@ -177,6 +179,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --batch)
             BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --eval-batch)
+            EVAL_BATCH_SIZE="$2"
             shift 2
             ;;
         --grad-accum)
@@ -277,6 +283,7 @@ echo "启用时间戳: $USE_TIMESTAMP"
 echo "偏好β值: $PREF_BETA"
 echo "学习率: $LEARNING_RATE"
 echo "训练批量大小: $BATCH_SIZE"
+echo "评估批量大小: $EVAL_BATCH_SIZE"
 echo "梯度累积步数: $GRAD_ACCUM_STEPS"
 echo "LoRA秩: $LORA_RANK"
 echo "最大上下文长度: $CUTOFF_LEN"
@@ -315,6 +322,7 @@ update_config() {
     sed -i "s|pref_beta:.*|pref_beta: $PREF_BETA|g" $new_config_file
     sed -i "s|learning_rate:.*|learning_rate: $LEARNING_RATE|g" $new_config_file
     sed -i "s|per_device_train_batch_size:.*|per_device_train_batch_size: $BATCH_SIZE|g" $new_config_file
+    sed -i "s|per_device_eval_batch_size:.*|per_device_eval_batch_size: $EVAL_BATCH_SIZE|g" $new_config_file
     sed -i "s|gradient_accumulation_steps:.*|gradient_accumulation_steps: $GRAD_ACCUM_STEPS|g" $new_config_file
     sed -i "s|lora_rank:.*|lora_rank: $LORA_RANK|g" $new_config_file
     sed -i "s|cutoff_len:.*|cutoff_len: $CUTOFF_LEN|g" $new_config_file
@@ -325,6 +333,12 @@ update_config() {
     # 更新输出目录设置
     sed -i "s|output_dir:.*|output_dir: $config_dir|g" $new_config_file
     sed -i "s|overwrite_output_dir:.*|overwrite_output_dir: true|g" $new_config_file
+    
+    # 更新wandb项目名称
+    sed -i "s|# python xdpo/run_demo.py --config xdpo/config_.*yaml --wandb_project.*|# python xdpo/run_demo.py --config xdpo/config_${config_num}.yaml --wandb_project $WANDB_PROJECT|g" $new_config_file
+    
+    # 添加wandb_project注释
+    sed -i "1s|^|# WANDB项目: $WANDB_PROJECT\n|" $new_config_file
     
     # 创建README.md文件，记录实验信息
     cat > "${config_dir}/README.md" << EOF
@@ -342,6 +356,7 @@ update_config() {
 - **偏好β值**: $PREF_BETA
 - **学习率**: $LEARNING_RATE
 - **训练批量大小**: $BATCH_SIZE
+- **评估批量大小**: $EVAL_BATCH_SIZE
 - **梯度累积步数**: $GRAD_ACCUM_STEPS
 - **LoRA秩**: $LORA_RANK
 - **最大上下文长度**: $CUTOFF_LEN
@@ -423,6 +438,7 @@ run_model_for_config() {
     sed -i "s|pref_beta:.*|pref_beta: $PREF_BETA|g" $config_file
     sed -i "s|learning_rate:.*|learning_rate: $LEARNING_RATE|g" $config_file
     sed -i "s|per_device_train_batch_size:.*|per_device_train_batch_size: $BATCH_SIZE|g" $config_file
+    sed -i "s|per_device_eval_batch_size:.*|per_device_eval_batch_size: $EVAL_BATCH_SIZE|g" $config_file
     sed -i "s|gradient_accumulation_steps:.*|gradient_accumulation_steps: $GRAD_ACCUM_STEPS|g" $config_file
     sed -i "s|lora_rank:.*|lora_rank: $LORA_RANK|g" $config_file
     sed -i "s|cutoff_len:.*|cutoff_len: $CUTOFF_LEN|g" $config_file
@@ -433,6 +449,12 @@ run_model_for_config() {
     # 更新输出目录
     sed -i "s|output_dir:.*|output_dir: $model_output_dir|g" $config_file
     sed -i "s|overwrite_output_dir:.*|overwrite_output_dir: true|g" $config_file
+    
+    # 更新wandb项目名称
+    sed -i "s|# python xdpo/run_demo.py --config xdpo/config_.*yaml --wandb_project.*|# python xdpo/run_demo.py --config xdpo/config_${config_num}.yaml --wandb_project $WANDB_PROJECT|g" $config_file
+    
+    # 添加wandb_project注释
+    sed -i "1s|^|# WANDB项目: $WANDB_PROJECT\n|" $config_file
     
     # 运行实验
     echo "开始运行实验..."
@@ -479,6 +501,7 @@ if [[ "$MODEL_COMPARE" = true ]]; then
 - **偏好β值**: $PREF_BETA
 - **学习率**: $LEARNING_RATE
 - **训练批量大小**: $BATCH_SIZE
+- **评估批量大小**: $EVAL_BATCH_SIZE
 - **梯度累积步数**: $GRAD_ACCUM_STEPS
 - **LoRA秩**: $LORA_RANK
 - **最大上下文长度**: $CUTOFF_LEN
@@ -616,7 +639,7 @@ echo "实验结果保存在: $EXPERIMENT_DIR"
 echo "可通过 ${EXPERIMENT_DIR}/README.md 查看实验详情和重现命令。"
 
 # 在统一实验目录创建说明文件
-cat > "${EXPERIMENT_DIR}/README.md " << EOF
+cat > "${EXPERIMENT_DIR}/README.md" << EOF
 # DPO实验组合 - $(date '+%Y-%m-%d %H:%M:%S')
 
 ## 实验概述
@@ -637,6 +660,7 @@ done)
 - **偏好β值**: $PREF_BETA
 - **学习率**: $LEARNING_RATE
 - **训练批量大小**: $BATCH_SIZE
+- **评估批量大小**: $EVAL_BATCH_SIZE
 - **梯度累积步数**: $GRAD_ACCUM_STEPS
 - **LoRA秩**: $LORA_RANK
 - **最大上下文长度**: $CUTOFF_LEN
@@ -655,4 +679,4 @@ done)
 ## 实验时间
 实验开始时间: $(date '+%Y-%m-%d %H:%M:%S')
 实验结束时间: $(date '+%Y-%m-%d %H:%M:%S')
-EOF 
+EOF

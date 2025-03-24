@@ -11,32 +11,32 @@
 # 4. 保存实验脚本副本到输出目录，方便后续复现
 #
 # 基本用法：
-# ./xdpo/run_lr_experiments.sh [选项]
+# ./xdpo/quick_exp/run_lr_experiments.sh [选项]
 #
 # 示例:
 # # 使用默认参数运行所有实验
 # ./xdpo/run_lr_experiments.sh
 #
 # # 只运行特定学习速率的实验
-# ./xdpo/run_lr_experiments.sh --lr 5e-5
+# ./xdpo/quick_exp/run_lr_experiments.sh --lr 5e-5
 #
 # # 修改数据集和评估数据集
-# ./xdpo/run_lr_experiments.sh -d custom_dataset -e test_dataset
+# ./xdpo/quick_exp/run_lr_experiments.sh -d custom_dataset -e test_dataset
 #
 # # 只运行use_dynamic_beta=true的实验
-# ./xdpo/run_lr_experiments.sh --dynamic-beta
+# ./xdpo/quick_exp/run_lr_experiments.sh --dynamic-beta
 #
 # # 只运行disco_pref=true的实验
 # ./xdpo/run_lr_experiments.sh --disco-pref
 #
 # # 只运行特定编号的实验
-# ./xdpo/run_lr_experiments.sh --exp 2
+# ./xdpo/quick_exp/run_lr_experiments.sh --exp 2
 #
 # # 调整训练参数
-# ./xdpo/run_lr_experiments.sh --beta 0.5 --batch 4
+# ./xdpo/quick_exp/run_lr_experiments.sh --beta 0.5 --batch 4
 #
 # # 使用时间戳防止结果被覆盖
-# ./xdpo/run_lr_experiments.sh --timestamp
+# ./xdpo/quick_exp/run_lr_experiments.sh --timestamp
 #
 # 可用选项：
 # -s, --samples NUM       设置样本数量 

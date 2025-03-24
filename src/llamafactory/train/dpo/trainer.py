@@ -420,6 +420,35 @@ class CustomDPOTrainer(DPOTrainer):
             reference_chosen_logps, reference_rejected_logps, *_ = self.concatenated_forward(ref_model, batch)
 
         return reference_chosen_logps, reference_rejected_logps
+    
+
+    def ref_model_forward(self, model: "PreTrainedModel", batch: dict[str, "torch.Tensor"]) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""Compute log probabilities of the reference model with beta head."""
+
+        if not self.finetuning_args.use_ref_model:
+            return None, None, None
+
+        if self.ref_model is None:
+            ref_model = model
+            ref_context = self.accelerator.unwrap_model(model).disable_adapter()
+        else:
+            ref_model = self.ref_model
+            ref_context = nullcontext()
+
+        with ref_context:
+            # 调用 concatenated_forward 方法
+            outputs = self.concatenated_forward(ref_model, batch)
+        
+        # reference_chosen_logps, reference_rejected_logps 计算, 并且 detach
+        reference_chosen_logps, reference_rejected_logps, *_ = outputs
+        reference_chosen_logps = reference_chosen_logps.detach()
+        reference_rejected_logps = reference_rejected_logps.detach()
+
+        # 获取 beta_values
+        beta_values = outputs[-1]
+
+        return reference_chosen_logps, reference_rejected_logps, beta_values
+
 
     @override
     def get_batch_loss_metrics(
@@ -431,23 +460,20 @@ class CustomDPOTrainer(DPOTrainer):
         r"""Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
 
-        (
-            policy_chosen_logps,
-            policy_rejected_logps,
-            policy_chosen_logits,
-            policy_rejected_logits,
-            policy_chosen_logps_avg,
-            beta_values,
-        ) = self.concatenated_forward(model, batch)
+    
+        policy_outputs = self.concatenated_forward(model, batch)
+        policy_chosen_logps, policy_rejected_logps, policy_chosen_logits, policy_rejected_logits, policy_chosen_logps_avg = policy_outputs[:5]
+
+        reference_chosen_logps, reference_rejected_logps, beta_values = self.ref_model_forward(model, batch)
+
         beta = beta_values if self.use_dynamic_beta else self.beta
 
-        reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
         losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
             policy_chosen_logps,
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
-            beta_values,
+            beta_values
         )
 
         # print(f"losses: {losses}")
