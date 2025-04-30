@@ -37,7 +37,7 @@ from ...extras.constants import IGNORE_INDEX
 from ...extras.packages import is_transformers_version_greater_than
 from ..callbacks import SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler, get_batch_logps, nested_detach
-from .beta_head import HiddenStateBetaHead
+from ..custom_head import SimpleBetaHead, SimpleRewardVarianceHead
 
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ class FDivergenceConstants:
     ALPHA_DIVERGENCE_COEF_DEFAULT = 1.0
 
 
-# 这两个函数看起来“奇怪”的原因主要是它们的实现方式比较特殊，涉及到一些底层的数值计算细节。
+# 这两个函数看起来"奇怪"的原因主要是它们的实现方式比较特殊，涉及到一些底层的数值计算细节。
 # 然而，它们的设计是有实际意义的，主要是为了在数值计算中避免溢出问题。在实际使用中，这些函数可以帮助用户更安全地进行指数运算，特别是在处理大规模数据或复杂模型时。
 def get_exp_cap(value, decimal=4):
     """
@@ -111,7 +111,7 @@ def compute_pref_probs(logits: torch.FloatTensor, beta: torch.FloatTensor | floa
     return pref_probs
 
 
-def compute_log_pref_prob_customized(logits: torch.FloatTensor, beta: torch.FloatTensor | float, disco_pref: bool = False) -> torch.FloatTensor:
+def compute_log_pref_prob_customized(logits: torch.FloatTensor, beta: torch.FloatTensor | float, use_disco_pref: bool = False, std: torch.FloatTensor = None) -> torch.FloatTensor:
     """
     Compute the log preference probabilities for given logits and beta, avoiding numerical overflow.
 
@@ -139,9 +139,10 @@ def compute_log_pref_prob_customized(logits: torch.FloatTensor, beta: torch.Floa
     if isinstance(beta, torch.Tensor) and beta.shape != logits.shape:
         raise ValueError(f"beta tensor shape {beta.shape} must match logits shape {logits.shape}")
 
-    if disco_pref:
+    if use_disco_pref:
         # disco-DPO: log(p(y_w > y_l)) = log(Φ(0.6 * β * logits / √2))
-        scaled_logits = 0.6 * beta * logits / math.sqrt(2)
+        std = std if std else math.sqrt(2) # 正常来说是通过 variance head 的计算逻辑处理之后获得的. 
+        scaled_logits = 0.6 * beta * logits / std # 0.6 是一个经验系数, 使得其初始化接近 sigmoid 的形状.
         return torch.special.log_ndtr(scaled_logits)  
     else:
         # Standard DPO: log(p(y_w > y_l)) = logsigmoid(β * logits)
@@ -183,15 +184,19 @@ class CustomDPOTrainer(DPOTrainer):
         self._stored_metrics = defaultdict(lambda: defaultdict(list))
 
         # dpo hyperparams
-        self.beta = finetuning_args.pref_beta
+        self.pref_beta = finetuning_args.pref_beta
         self.loss_type = finetuning_args.pref_loss
         self.ftx_gamma = finetuning_args.pref_ftx
         self.label_smoothing = finetuning_args.dpo_label_smoothing
         self.simpo_gamma = finetuning_args.simpo_gamma
 
         # customized params for dpo variants
+        self.add_disco_head = finetuning_args.add_disco_head
+        self.add_beta_head = finetuning_args.add_beta_head
         self.use_dynamic_beta = finetuning_args.use_dynamic_beta
         self.disco_pref = finetuning_args.disco_pref
+        self.dynamic_beta = self.add_beta_head and self.use_dynamic_beta
+        self.use_disco_logic = self.add_disco_head and self.disco_pref
 
         Trainer.__init__(self, model=model, **kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
@@ -219,13 +224,19 @@ class CustomDPOTrainer(DPOTrainer):
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
 
-        if self.use_dynamic_beta:
-            self.beta_head = HiddenStateBetaHead(
+        if self.add_beta_head:
+            self.beta_head = SimpleBetaHead(
                 hidden_size=model.config.hidden_size,
-                beta_base=self.beta
+                beta_base=self.pref_beta
             ).to(self.accelerator.device)
             self.beta_pos_delta = []
             self.beta_neg_delta = []
+
+        if self.add_disco_head:
+            self.disco_head = SimpleRewardVarianceHead(
+                hidden_size=model.config.hidden_size,
+                std=self.std
+            ).to(self.accelerator.device)
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
@@ -237,22 +248,14 @@ class CustomDPOTrainer(DPOTrainer):
                 self.optimizer = super().create_optimizer()
             
             # 添加beta_head参数到优化器
-            if self.use_dynamic_beta and hasattr(self, "beta_head"):
-
-                
+            if self.dynamic_beta:
                 beta_head_params = list(self.beta_head.parameters())
                 
-                print(f"[DEBUG] BetaHead parameters:")
-                for name, param in self.beta_head.named_parameters():
-                    print(f"[DEBUG]   {name}: shape={param.shape}, requires_grad={param.requires_grad}")
-                
                 # 为beta_head参数设置更高的学习率（例如，是基本学习率的10倍）
-                # beta_head_lr = self.args.learning_rate * 10.0  # 10倍
-                beta_head_lr = self.args.learning_rate * 0.3 # 慢一定更新, 不然会不小到了 beta -> 0 的局部最优解了. 
-                # 添加参数组
+                beta_head_lr = self.args.learning_rate * 1.0 
                 params_config = {
                     "params": beta_head_params,
-                    "lr": beta_head_lr,  # 使用不同的学习率
+                    "lr": beta_head_lr,  # 可以使用不同的学习率
                 }
                 
                 # 复制原优化器配置（除了学习率和参数）
@@ -262,11 +265,22 @@ class CustomDPOTrainer(DPOTrainer):
                 
                 # 添加参数组
                 self.optimizer.add_param_group(params_config)
+            
+            if self.use_disco_head:
+                disco_head_params = list(self.disco_head.parameters())
+                disco_head_lr = self.args.learning_rate * 1.0
+                params_config = {
+                    "params": disco_head_params,
+                    "lr": disco_head_lr,
+                }   
                 
-                # 打印优化器信息
-                print(f"[DEBUG] Optimizer param groups:")
-                for i, group in enumerate(self.optimizer.param_groups):
-                    print(f"[DEBUG]   Group {i}: {len(group['params'])} parameters, lr={group['lr']}")
+                # 复制原优化器配置（除了学习率和参数）
+                for k, v in self.optimizer.param_groups[0].items():
+                    if k != "params" and k != "lr":
+                        params_config[k] = v
+                
+                # 添加参数组
+                self.optimizer.add_param_group(params_config)
                 
         return self.optimizer
 
@@ -295,18 +309,18 @@ class CustomDPOTrainer(DPOTrainer):
             torch.log1p(-torch.exp(chosen_logps)) - torch.log1p(-torch.exp(rejected_logps))
         )
         sft_loss = -chosen_logps
-        odds_ratio_loss = -torch.log(compute_pref_probs(log_odds, 1.0, self.disco_pref))  # 使用1.0作为beta值, 后面的 beta_values 是动态的
-        beta = beta_values if beta_values is not None else self.beta
+        odds_ratio_loss = -torch.log(compute_pref_probs(log_odds, 1.0, self.use_disco_logic))  # 使用1.0作为beta值, 后面的 beta_values 是动态的
+        beta = beta_values if beta_values is not None else self.pref_beta
         orpo_loss = sft_loss + beta * odds_ratio_loss
         return orpo_loss
 
     def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor", beta_values: Optional["torch.Tensor"] = None) -> "torch.Tensor":
         r"""Compute SimPO loss for batched log probabilities of the policy model."""
         pi_logratios = chosen_logps - rejected_logps
-        gamma_logratios = self.simpo_gamma / self.beta
+        gamma_logratios = self.simpo_gamma / self.pref_beta
         logits = pi_logratios - gamma_logratios
-        beta = beta_values if beta_values is not None else self.beta
-        simpo_loss = -torch.log(compute_pref_probs(logits, beta, self.disco_pref))
+        beta = beta_values if beta_values is not None else self.pref_beta
+        simpo_loss = -torch.log(compute_pref_probs(logits, beta, self.use_disco_logic))
         return simpo_loss
 
     def compute_preference_loss(
@@ -328,7 +342,7 @@ class CustomDPOTrainer(DPOTrainer):
             else:
                 raise NotImplementedError(f"Unknown loss type: {self.loss_type}.")
             
-            beta = beta_values if beta_values is not None else self.beta
+            beta = beta_values if beta_values is not None else self.pref_beta
             chosen_rewards = beta * policy_chosen_logps.to(self.accelerator.device).detach()
             rejected_rewards = beta * policy_rejected_logps.to(self.accelerator.device).detach()
         else:
@@ -357,7 +371,7 @@ class CustomDPOTrainer(DPOTrainer):
         """
         if self.finetuning_args.use_ref_model:
             batch = nested_detach(batch, clone=True)  # avoid error
-        if self.use_dynamic_beta:
+        if self.dynamic_beta:
             model_outputs = model(**batch, return_dict=True, use_cache=False, output_hidden_states=True)
             all_logits: torch.Tensor = model_outputs.logits.to(torch.float32)
             last_layer_hidden_states: torch.Tensor = model_outputs.hidden_states[-1].to(torch.float32) # [batch_size, seq_len, hidden_size]
@@ -466,7 +480,7 @@ class CustomDPOTrainer(DPOTrainer):
 
         reference_chosen_logps, reference_rejected_logps, beta_values = self.ref_model_forward(model, batch)
 
-        beta = beta_values if self.use_dynamic_beta else self.beta
+        beta = beta_values if self.dynamic_beta else self.pref_beta
 
         losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
             policy_chosen_logps,
@@ -494,11 +508,11 @@ class CustomDPOTrainer(DPOTrainer):
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / beta).mean().item()
         
-        metrics[f"{prefix}beta"] = beta_values.mean().item() if self.use_dynamic_beta else self.beta
+        metrics[f"{prefix}beta"] = beta_values.mean().item() if self.dynamic_beta else self.pref_beta
         delta = (policy_chosen_logps - reference_chosen_logps) - (policy_rejected_logps - reference_rejected_logps)
         metrics[f"{prefix}delta"] = delta.mean().item()
 
-        if self.use_dynamic_beta:
+        if self.dynamic_beta:
             beta_pos_delta = beta_values[delta > 0]
             beta_neg_delta = beta_values[delta <= 0]
             # 一个batch 太小, 很容易为空, 我也不知道填充一个什么样的值比较好, 所以就填充一个平均值.
@@ -574,18 +588,18 @@ class CustomDPOTrainer(DPOTrainer):
             not self.reference_free
         ) * reference_rejected_logps.to(self.accelerator.device)
 
-        beta = beta_values if beta_values is not None else self.beta
+        beta = beta_values if beta_values is not None else self.pref_beta
 
-        def log_pref_prob(logits, beta=1.0):
+        def log_pref_prob(logits, beta=1.0, std=None):
             """
             计算偏好概率的对数
 
             beta 是偏好概率的参数, 默认是1.0, 这里有个非常好的技巧 log_pref_prob(logits, beta) 和 log_pref_prob(logits * beta, 1.0) 是等价的.
             """
-            if self.disco_pref:
-                return compute_log_pref_prob_customized(logits, beta, True)
+            if self.use_disco_logic:
+                return compute_log_pref_prob_customized(logits, beta, True, std)
             else:
-                return compute_log_pref_prob_customized(logits, beta, False)
+                return compute_log_pref_prob_customized(logits, beta, False, std)
 
         if self.f_divergence_type == FDivergenceType.ALPHA_DIVERGENCE.value:
             alpha_coef = FDivergenceConstants.ALPHA_DIVERGENCE_COEF_DEFAULT

@@ -128,6 +128,14 @@ class RLHFArguments:
     Arguments pertaining to the PPO, DPO and KTO training.
     """
     # custom parameters for our DPO variants
+    add_disco_head: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to add the Disco head structure to the policy/RM model."},
+    )
+    add_beta_head: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to add the Beta head structure to the reference model."},
+    )
     use_dynamic_beta: bool = field(
         default=False,
         metadata={"help": "Whether or not to use the dynamic beta."},

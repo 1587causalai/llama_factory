@@ -3,9 +3,10 @@
 # 方式二 (使用CLI工具): llamafactory-cli train custom/dpo_baseline.yaml
 # DISABLE_VERSION_CHECK=1 用于避免版本检查
 
-# ### 定制参数 (移除, 用于标准DPO基线)
-use_dynamic_beta: true
-disco_pref: false
+# ### 定制参数 (移除, 用于标准DPO基线) 
+# 默认使用 custom heads 但是不一定使用
+use_dynamic_beta: false
+disco_pref: true
 
 ### model
 model_name_or_path: /root/models/Qwen3-0.6B  # Qwen1.5-0.5B
@@ -39,7 +40,7 @@ dataset: hh_rlhf_en
 dataset_dir: data
 template: qwen
 cutoff_len: 512
-max_samples: 1000
+max_samples: 100
 overwrite_cache: true
 preprocessing_num_workers: 1 
 dataloader_num_workers: 2 # Should be 0 if set in script, ensure consistency
