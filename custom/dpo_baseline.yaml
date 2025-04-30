@@ -1,0 +1,61 @@
+# 运行命令
+# 方式一 (直接运行脚本): python custom/run_dpo_baseline.py --config custom/dpo_baseline.yaml [--wandb_project dpo_baseline_demo]
+# 方式二 (使用CLI工具): llamafactory-cli train custom/dpo_baseline.yaml
+# DISABLE_VERSION_CHECK=1 用于避免版本检查
+
+# ### 定制参数 (移除, 用于标准DPO基线)
+use_dynamic_beta: true
+disco_pref: false
+
+### model
+model_name_or_path: /root/models/Qwen3-0.6B  # Qwen1.5-0.5B
+trust_remote_code: true
+# ref_model: /root/models/Qwen1.5-0.5B-Chat # Reference model typically needed for DPO
+# Consider if use_ref_model=true should be explicitly set if ref_model is uncommented
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 4
+lora_target: all
+pref_beta: 0.1 # Standard DPO beta value
+pref_loss: sigmoid  # DPO uses sigmoid loss
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+
+### dataset
+dataset: hh_rlhf_en
+dataset_dir: data
+template: qwen
+cutoff_len: 512
+max_samples: 1000
+overwrite_cache: true
+preprocessing_num_workers: 1 
+dataloader_num_workers: 2 # Should be 0 if set in script, ensure consistency
+
+### output
+output_dir: results/qwen3-0.6b/lora/dpo_baseline
+logging_steps: 5
+save_steps: 100
+plot_loss: true # This might be a general trainer flag, keep for now
+overwrite_output_dir: true
+save_only_model: false
+report_to: [wandb]
+
+### eval
+# eval_dataset: dpo_zh_demo
+val_size: 0.1
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 5 
