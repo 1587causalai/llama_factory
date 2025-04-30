@@ -1,4 +1,4 @@
-# 定制化对齐参数设计 V7.1：设计理念、演进与技术方案
+# 定制化对齐参数设计 V7.3：设计理念、演进与技术方案
 
 ## 1. 引言与目标
 
@@ -12,14 +12,14 @@
 
 ### 1.2 本次设计的目标
 
-基于上述反思，本次 V7.1 参数设计旨在**从根本上重新思考和构建**一套更优的定制化对齐框架，其核心目标是：
+基于上述反思，本次 V7.3 参数设计旨在**从根本上重新思考和构建**一套更优的定制化对齐框架，其核心目标是：
 
 *   **逻辑清晰**: 设计方案要能清晰地反映我们对偏好对齐底层逻辑的理解，特别是关于概率化奖励和自适应策略权衡的思考。
 *   **模块化与解耦**: 严格分离不同的功能模块和设计理念，尤其是将模型**架构的变更**与**算法逻辑中对该架构的使用**解耦。
 *   **灵活性与可扩展性**: 方案应足够灵活，便于进行各种组合实验、消融研究，并为未来可能的扩展预留空间。
 *   **实现简洁**: 在满足上述目标的前提下，追求参数设计和最终代码实现的简洁性与一致性。
 
-本文档将详细阐述 V7.1 方案如何通过引入两大核心概念——"概率化奖励 (Disco 逻辑)"和"上下文自适应权衡 (动态 Beta)"——并遵循"架构与使用解耦"的设计哲学来实现这些目标。
+本文档将详细阐述 V7.3 方案如何通过引入两大核心概念——"概率化奖励 (Disco 逻辑)"和"上下文自适应权衡 (动态 Beta)"——并遵循"架构与使用解耦"的设计哲学来实现这些目标。
 
 ## 2. 核心概念一：概率化奖励 (Disco 逻辑)
 
@@ -35,7 +35,7 @@
 
 2.  **损失函数适配**: 有了奖励分布的输出，就需要相应的损失函数来比较偏好对中两个响应的奖励分布。我们不再使用基于标量差的 sigmoid 损失，而是采用基于比较两个概率分布的逻辑，这通常会用到误差函数 (erf) 或正态分布累积函数 (NDTR)。通过参数 `pref_loss_type: disco` 来指定**使用**这种基于分布比较的损失计算方式。逻辑上，选择 `disco` 损失必然要求模型架构中存在 Disco Head (`add_disco_head: true`)。
 
-### 2.3 V7.1 相关参数
+### 2.3 V7.3 相关参数
 
 *   `add_disco_head` (Boolean, default `false`): 控制 Disco Head **架构是否存在**。
 *   `pref_loss_type` (Enum, default `sigmoid`, options [`sigmoid`, `disco`]): 控制损失函数**计算方式**，`disco` 选项代表使用 Disco Head 的输出进行计算。
@@ -53,15 +53,13 @@ DPO (及 PPO) 中的核心权衡参数 \(\beta\) (或 KL 系数) 体现了算法
 
 经过深入讨论，我们认为这个"决定权衡程度"的决策逻辑，其发生的自然位置是在信息融合的源头——即**参考模型 (\(\pi_{\text{ref}}\))** 评估完当前上下文之后。是参考模型基于对上下文的理解，来判断应该"固守多少经验"以及"采纳多少新信息"。
 
-### 3.3 实现机制：Beta Head on Reference + 基准与调节因子
+### 3.3 实现机制：Beta Head on Reference + 基准与调节因子 (简化版)
 
 基于上述洞察，我们设计了如下机制：
 
-1.  **架构支持**: 在**参考模型 \(\pi_{\text{ref}}\)** 上添加一个 **Beta Head**。通过 `add_beta_head: true` 控制此架构的存在，并通过 `beta_head_config` (Dictionary) 配置其具体实现（如使用 MLP 结构，输入可能包括 \(\pi_{\text{ref}}\) 的隐状态、PPL 等特征）。
-
-2.  **调节因子输出**: Beta Head 的任务不是直接输出最终的 \(\beta_{\text{eff}}(x)\)，而是输出一个围绕 1 波动的**正数调节因子 \(s(x)\)**。这表示了相对于全局基准，当前上下文需要进行的**相对调整幅度**。
-
-3.  **算法应用**: 在算法层面（如 DPO 损失计算中），通过参数 `beta_mode: dynamic_scaling` 来指示算法**使用** Beta Head 输出的调节因子。最终的有效权衡参数通过**基准值 \(\beta_{\text{fixed}}\)** （由参数 `beta` 指定）乘以调节因子得到： \(\beta_{\text{eff}}(x) = \beta_{\text{fixed}} \cdot s(x)\) 。参数 `beta` 在此模式下明确作为可调节的**基准**，保留了全局权衡水平的意义，极大地便利了对比实验（比较 `fixed` vs `dynamic_scaling` 模式）。
+1.  **架构支持**: 在**参考模型 \(\pi_{\text{ref}}\)** 上添加一个**使用预设默认实现的 Beta Head**。通过 `add_beta_head: true` 控制此架构的存在。这个默认实现应该足够简单有效（例如，基于隐状态的简单网络）。
+2.  **调节因子输出**: 这个默认的 Beta Head 的任务是输出一个围绕 1 波动的**正数调节因子 \(s(x)\)**。
+3.  **算法应用**: 在算法层面，通过参数 `beta_mode: dynamic_scaling` 来指示算法**使用**这个默认 Beta Head 输出的调节因子。最终的有效权衡参数通过**基准值 \(\beta_{\text{fixed}}\)** （由参数 `pref_beta` 指定）乘以调节因子得到： \(\beta_{\text{eff}}(x) = \beta_{\text{fixed}} \cdot s(x)\) 。
 
 ### 3.4 逻辑优势与扩展性
 
@@ -71,16 +69,15 @@ DPO (及 PPO) 中的核心权衡参数 \(\beta\) (或 KL 系数) 体现了算法
 *   使固定 Beta (`beta_mode: fixed`) 和动态 Beta (`beta_mode: dynamic_scaling`) 的对比更加公平和清晰。
 *   该机制的权衡逻辑也适用于 PPO 等其他算法。
 
-### 3.5 V7.1 相关参数
+### 3.5 V7.3 相关参数 (移除 beta_head_config)
 
-*   `add_beta_head` (Boolean, default `false`): 控制 Beta Head **架构是否存在** (on ref model)。
-*   `beta_head_config` (Dictionary, default `None`): **定义** Beta Head 的具体实现 (仅当 `add_beta_head: true`)。
-*   `beta_mode` (Enum, default `fixed`, options [`fixed`, `dynamic_scaling`]): 控制最终 \(\beta\) **值的来源**，`dynamic_scaling` 表示使用 Beta Head 的输出进行调节。
-*   `beta` (Float, default e.g., 0.1): 提供**基准** \(\beta\) 值。
+*   `add_beta_head` (Boolean, default `false`): 控制 Beta Head **架构是否存在** (on ref model, 使用默认实现)。
+*   `beta_mode` (Enum, default `fixed`, options [`fixed`, `dynamic_scaling`]): 控制最终 \(\beta\) **值的来源**，`dynamic_scaling` 表示使用 (默认) Beta Head 的输出进行调节。
+*   `pref_beta` (Float, default e.g., 0.1): 提供**基准** \(\beta\) 值 (复用 LLaMA Factory 原有参数)。
 
 ## 4. 关键设计原则：架构与使用的解耦
 
-V7.1 方案严格遵循**模型架构的添加**与**算法逻辑中对该架构输出的使用**相分离的原则。
+V7.3 方案严格遵循**模型架构的添加**与**算法逻辑中对该架构输出的使用**相分离的原则。
 
 *   `add_disco_head` / `add_beta_head` 负责声明架构组件**是否存在**。
 *   `pref_loss_type` / `beta_mode` 负责声明算法逻辑是否**实际使用**这些组件的输出。
@@ -90,17 +87,16 @@ V7.1 方案严格遵循**模型架构的添加**与**算法逻辑中对该架构
 *   **灵活性**: 允许进行更细粒度的实验控制，例如模型包含 Beta Head 但暂时不使用其输出进行动态缩放（`add_beta_head: true, beta_mode: fixed`），这对于调试、消融研究和分阶段训练至关重要。
 *   **清晰性**: 每个参数的职责单一明确，降低了理解和配置的复杂度。
 
-## 5. 最终参数方案 (V7.1) - 快速参考
+## 5. 最终参数方案 (V7.3) - 快速参考 (移除 beta_head_config)
 
-| 参数                 | 类型         | 默认值       | 适用阶段        | 核心职责                                   |
-| -------------------- | ------------ | ------------ | --------------- | ------------------------------------------ |
-| `add_disco_head`     | Boolean      | `false`      | `rm`, `dpo`     | 控制 Disco Head 架构是否存在             |
-| `add_beta_head`      | Boolean      | `false`      | `dpo`, `ppo`    | 控制 Beta Head 架构是否存在 (on ref)   |
-| `beta_head_config`   | Dictionary   | `None`       | `dpo`, `ppo`    | 定义 Beta Head 实现细节 (if added)         |
-| `pref_loss_type`     | Enum         | `sigmoid`    | `rm`, `dpo`     | 控制损失计算方式 (可能使用 Disco Head 输出) |
-| `beta_mode`          | Enum         | `fixed`      | `dpo`, `ppo`    | 控制 Beta/权衡参数来源 (可能使用 Beta Head 输出) |
-| `beta`               | Float        | (e.g., 0.1)  | `dpo`, `ppo`    | 提供固定/基准 Beta 值                       |
+| 参数             | 类型     | 默认值       | 适用阶段     | 核心职责                                   |
+| ---------------- | -------- | ------------ | ------------ | ------------------------------------------ |
+| `add_disco_head` | Boolean  | `false`      | `rm`, `dpo`  | 控制 Disco Head 架构是否存在             |
+| `add_beta_head`  | Boolean  | `false`      | `dpo`, `ppo` | 控制 Beta Head 架构是否存在 (默认实现) |
+| `pref_loss_type` | Enum     | `sigmoid`    | `rm`, `dpo`  | 控制损失计算方式 (可能使用 Disco Head 输出) |
+| `beta_mode`      | Enum     | `fixed`      | `dpo`, `ppo` | 控制 Beta/权衡参数来源 (可能使用 Beta Head 输出) |
+| `pref_beta`      | Float    | (e.g., 0.1)  | `dpo`, `ppo` | 提供固定/基准 Beta 值                       |
 
 ## 6. 总结
 
-V7.1 参数设计方案是我们深入讨论和迭代思考的结晶。它通过引入概率化奖励 (Disco) 和上下文自适应权衡 (动态 Beta) 的核心概念，并严格遵循架构与使用解耦的设计原则，旨在为 LLaMA Factory 提供一套逻辑清晰、模块化、灵活且强大的定制化偏好对齐功能框架。这份文档将作为后续具体开发分支的技术蓝图和核心指南。
+V7.3 参数设计方案是我们深入讨论和迭代思考的结晶。它通过引入概率化奖励 (Disco) 和上下文自适应权衡 (动态 Beta) 的核心概念，并严格遵循架构与使用解耦的设计原则，旨在为 LLaMA Factory 提供一套逻辑清晰、模块化、灵活且强大的定制化偏好对齐功能框架。这份文档将作为后续具体开发分支的技术蓝图和核心指南。
