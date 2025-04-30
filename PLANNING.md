@@ -1,15 +1,19 @@
-# Project Planning: Preference Alignment Algorithms
+# 项目规划：定制化偏好对齐算法
 
-This document outlines the development plan, goals, and branching strategy for implementing and experimenting with various preference alignment algorithms within the LLaMA Factory framework. Its purpose is to serve as a central reference point and guide for the development process. 
+本文档作为 LLaMA Factory 中定制化偏好对齐算法开发项目的**顶层入口和概览**。目的是提供项目的总体目标、核心设计理念的快速索引，并指导读者查阅更详细的文档。
 
-## Overall Goal
+## 总体目标
 
-(在此处简要描述项目的最终目标，例如：开发一套定制化的偏好对齐训练流程。细节待补充。)
+本项目旨在基于我们当前共同确定的**详细参数设计方案**，在 LLaMA Factory 框架内实现一套**逻辑清晰、模块化、灵活且解耦**的定制化偏好对齐功能。核心是实现对 **概率化奖励 (Disco 逻辑)** 和 **上下文自适应权衡 (动态 Beta / LeDPO 逻辑)** 的深刻理解，并遵循**架构与使用解耦**的设计哲学。
 
-## Development Stages
+要了解本项目旨在实现的核心需求和设计理念，请参考：[`rules/my_preference_alignment_needs.md`](./rules/my_preference_alignment_needs.md)
 
-(此处将列出实现总体目标所需的主要开发阶段。目前仍在构思中，后续会逐步细化。)
+## 开发阶段与技术方案
 
-## Branching Strategy
+开发将遵循详细设计方案中定义的模块化组件（如 Disco Head 添加、Beta Head 添加、Disco Loss 实现、动态 Beta 应用等）分阶段进行。
 
-(本文件的核心目的：记录未来创建的各个开发分支及其对应的功能和目标。随着开发的进行，这里会不断更新。) 
+关于当前阶段的技术设计、参数规格以及设计演进过程的详细说明，请参考：[`branch_docs/parameter_design.md`](./branch_docs/parameter_design.md) （注意：此文档会随着设计的迭代而更新）
+
+## 分支策略
+
+具体的开发工作将分解到不同的特性分支中。每个分支将专注于实现设计蓝图中的一个或多个相关功能点。各个分支的详细计划和说明文档将存放于 `branch_docs/` 目录下（待后续填充）。所有分支的开发都应参考 `parameter_design.md` 中定义的最新技术规范。 
