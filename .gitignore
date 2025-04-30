@@ -179,4 +179,5 @@ generated_predictions.jsonl
 results/
 temp*
 experiments/
-xdpo/.*
+xdpo
+tmp.py
