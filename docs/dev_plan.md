@@ -33,8 +33,8 @@
     *   **添加 Disco Head**: 实现 `add_disco_head` 参数功能，让模型具备输出分布参数的能力。
     *   **添加 Beta Head**: 实现 `add_beta_head` 参数功能，在参考模型上添加默认实现的 Beta Head。
 2.  **实现核心算法逻辑**: 
-    *   **Disco Loss**: 实现 `pref_loss_type: disco` 对应的损失计算逻辑。
-    *   **动态 Beta 应用**: 实现 `beta_mode: dynamic_scaling` 对应的、使用 Beta Head 输出调节 `pref_beta` 的逻辑。
+    *   **Disco 损失逻辑启用**: 实现当 `disco_pref: true` 时，**使用** Disco Head 输出进行损失计算的逻辑。
+    *   **动态 Beta 应用启用**: 实现当 `use_dynamic_beta: true` 时，**使用** Beta Head 输出调节 `pref_beta` 的逻辑。
 3.  **整合与测试**: 将各个模块整合，进行全面的单元测试、集成测试和效果验证实验。
 4.  **文档完善**: 随着开发的进行，持续更新相关文档，记录实现细节和遇到的问题。
 
