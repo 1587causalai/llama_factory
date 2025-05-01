@@ -1,0 +1,55 @@
+# 运行命令
+# 方式一 (直接运行脚本): python custom/run_rm_baseline.py --config custom/rm_baseline.yaml [--wandb_project rm_baseline_demo]
+# 方式二 (使用CLI工具): llamafactory-cli train custom/rm_baseline.yaml
+# DISABLE_VERSION_CHECK=1 用于避免版本检查
+
+### model
+model_name_or_path: /root/models/Qwen3-0.6B
+trust_remote_code: true
+# RM 训练不需要 ref_model
+
+### method
+stage: rm # 明确指定阶段为 rm
+do_train: true
+finetuning_type: lora # 继续使用 LoRA 进行微调
+lora_rank: 4
+lora_target: all
+# RM 训练不需要 DPO 特定的 pref_beta, pref_loss
+
+### train
+per_device_train_batch_size: 1 # 可根据显存调整
+gradient_accumulation_steps: 2 # 可根据显存调整
+learning_rate: 1.0e-4 # RM 学习率通常可以稍大或与 SFT 类似, 1e-4 是一个起点
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true # 如果 GPU 支持 bf16
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+
+### dataset
+dataset: hh_rlhf_en # 使用与 DPO 示例相同的数据集
+dataset_dir: data
+template: qwen # 确保模板与模型匹配
+cutoff_len: 512
+max_samples: 100 # 仅用于快速测试, 实际训练应增加
+overwrite_cache: true
+preprocessing_num_workers: 1 
+dataloader_num_workers: 0 # 与 DPO 脚本保持一致设为 0
+
+### output
+output_dir: results/qwen3-0.6b/lora/rm_baseline # 修改输出目录以反映 RM 基线
+logging_steps: 5
+save_steps: 100
+plot_loss: true 
+overwrite_output_dir: true
+save_only_model: false # 保存完整的 checkpoint
+report_to: [wandb] # 可选, 如果使用 wandb
+
+### eval
+# eval_dataset: hh_rlhf_en # 可以使用相同的数据集进行评估
+val_size: 0.1 # 从训练集中划分验证集比例
+per_device_eval_batch_size: 1
+eval_strategy: steps # 或 "epoch"
+eval_steps: 5 # 评估频率 

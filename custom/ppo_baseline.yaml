@@ -1,0 +1,72 @@
+# 运行命令
+# 方式一 (直接运行脚本): python custom/run_ppo_baseline.py --config custom/ppo_baseline.yaml [--wandb_project ppo_baseline_demo]
+# 方式二 (使用CLI工具): llamafactory-cli train custom/ppo_baseline.yaml
+# DISABLE_VERSION_CHECK=1 用于避免版本检查
+
+### model
+model_name_or_path: /root/models/Qwen3-0.6B # Actor 模型的基础模型
+reward_model: results/qwen3-0.6b/lora/rm_baseline/checkpoint-45 # 直接指定正确的 checkpoint 路径
+trust_remote_code: true
+# PPO 通常需要 ref_model, 默认会使用 model_name_or_path 作为 ref_model
+# 如果需要指定不同的 ref_model (例如 SFT 后的模型), 取消注释并设置路径:
+# ref_model: path/to/your/sft_model
+# use_ref_model: true # 如果指定了 ref_model, 需要设为 true
+
+### method
+stage: ppo # 明确指定阶段为 ppo
+do_train: true
+finetuning_type: lora # 继续使用 LoRA 进行微调
+lora_rank: 4 # 与 RM 保持一致
+lora_target: all # 与 RM 保持一致
+reward_model_type: full # <--- 显式指定类型，让 Trainer 使用传入的 RM 对象
+# PPO 相关超参数 (参考默认值或官方示例, 可调整)
+ppo_epochs: 4 # PPO 内部优化轮数
+ppo_buffer_size: 1 # 经验缓冲区大小 (影响数据量)
+ppo_target: 6.0 # KL 散度目标值
+ppo_score_norm: false # 是否对奖励分数进行归一化
+ppo_whiten_rewards: false # 是否对奖励进行白化
+
+### train
+per_device_train_batch_size: 1 # PPO mini_batch_size
+gradient_accumulation_steps: 2 # 梯度累积步数
+learning_rate: 1.0e-5 # PPO 学习率通常较小
+num_train_epochs: 1.0 # PPO 整体训练轮数
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true # 如果 GPU 支持 bf16
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### dataset
+dataset: alpaca_en_demo # 修改为适用于 PPO 的 prompts 数据集
+dataset_dir: data
+template: qwen # 确保模板与模型匹配
+cutoff_len: 512 # Prompt 的最大长度
+max_samples: 100 # 仅用于快速测试, 实际训练应增加
+overwrite_cache: true
+preprocessing_num_workers: 1 
+dataloader_num_workers: 0 # 与之前脚本保持一致设为 0
+
+### output
+output_dir: results/qwen3-0.6b/lora/ppo_baseline # 修改输出目录以反映 PPO 基线
+logging_steps: 5
+save_steps: 100
+plot_loss: true 
+overwrite_output_dir: true
+save_only_model: false # 保存完整的 checkpoint
+report_to: [wandb] # 可选, 如果使用 wandb
+
+### generate
+# 控制 Actor 生成响应的参数
+max_new_tokens: 128 # 生成响应的最大长度
+temperature: 1.0
+top_p: 0.9
+top_k: 0
+
+### eval
+# PPO 默认不支持标准的 evaluation dataset 流程
+# 评估通常通过观察生成的响应质量和奖励/KL 指标进行
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 50 
